@@ -12,7 +12,6 @@ asar: true
 
 publish:
   provider: github
-  releaseType: release
 
 mac:
   category: public.app-category.developer-tools
