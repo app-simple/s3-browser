@@ -98,17 +98,19 @@ export default function ObjectTable({
               />
             </td>
             <td className="name-cell" title={e.key}>
-              {e.type === 'folder' ? <FolderIcon /> : <FileIcon />}
-              <span
-                className={`label ${e.type === 'folder' ? 'folder' : ''}`}
-                onClick={(ev) => {
-                  if (e.type !== 'folder') return
-                  ev.stopPropagation()
-                  onOpenFolder(e.key)
-                }}
-              >
-                {e.name}
-              </span>
+              <div className="name-inner">
+                {e.type === 'folder' ? <FolderIcon /> : <FileIcon />}
+                <span
+                  className={`label ${e.type === 'folder' ? 'folder' : ''}`}
+                  onClick={(ev) => {
+                    if (e.type !== 'folder') return
+                    ev.stopPropagation()
+                    onOpenFolder(e.key)
+                  }}
+                >
+                  {e.name}
+                </span>
+              </div>
             </td>
             <td className="col-size">{e.type === 'folder' ? '—' : formatBytes(e.size)}</td>
             <td className="col-date">{e.type === 'folder' ? '—' : formatDate(e.lastModified)}</td>

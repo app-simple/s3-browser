@@ -191,7 +191,11 @@ table.objects td {
 table.objects tr { cursor: default; }
 table.objects tbody tr:hover { background: var(--row-hover); }
 table.objects tbody tr.selected { background: var(--row-sel); }
-td.name-cell { display: flex; align-items: center; gap: 8px; max-width: 0; }
+/* max-width: 0 makes the cell absorb the table's leftover width so the label
+   can ellipsize; the cell must stay display: table-cell for that to work,
+   so the flex row lives on an inner wrapper. */
+td.name-cell { max-width: 0; }
+td.name-cell .name-inner { display: flex; align-items: center; gap: 8px; }
 td.name-cell .label { overflow: hidden; text-overflow: ellipsis; }
 td.name-cell .label.folder { color: var(--accent); cursor: pointer; }
 td.col-size, td.col-date, td.col-class { color: var(--text-dim); font-variant-numeric: tabular-nums; }
