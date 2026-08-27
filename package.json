@@ -1,7 +1,7 @@
 {
   "name": "s3-browser",
   "productName": "S3 Browser",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Cross-platform S3 client for AWS S3, MinIO, Hetzner, Backblaze B2, Wasabi and other S3-compatible storage",
   "main": "./out/main/index.js",
   "license": "MIT",
