@@ -50,13 +50,31 @@ const api = {
       call<number>('transfer:upload', accountId, bucket, prefix, paths),
     download: (accountId: string, bucket: string, entries: EntryRef[], destDir: string) =>
       call<number>('transfer:download', accountId, bucket, entries, destDir),
-    copy: (
+    planCopy: (
       sourceAccountId: string,
       sourceBucket: string,
       entries: (EntryRef & { size?: number })[],
       targetAccountId: string,
       targetBucket: string,
       targetPrefix: string
+    ) =>
+      call<{ total: number; conflicts: number; sample: string[] }>(
+        'transfer:planCopy',
+        sourceAccountId,
+        sourceBucket,
+        entries,
+        targetAccountId,
+        targetBucket,
+        targetPrefix
+      ),
+    copy: (
+      sourceAccountId: string,
+      sourceBucket: string,
+      entries: (EntryRef & { size?: number })[],
+      targetAccountId: string,
+      targetBucket: string,
+      targetPrefix: string,
+      skipExisting = false
     ) =>
       call<number>(
         'transfer:copy',
@@ -65,7 +83,8 @@ const api = {
         entries,
         targetAccountId,
         targetBucket,
-        targetPrefix
+        targetPrefix,
+        skipExisting
       ),
     syncBucket: (
       sourceAccountId: string,

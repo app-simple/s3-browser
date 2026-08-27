@@ -102,6 +102,7 @@ export interface Transfer {
   detail?: string
   itemsDone?: number
   itemsTotal?: number
+  itemsSkipped?: number
 }
 
 export interface Result<T> {

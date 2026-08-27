@@ -71,7 +71,7 @@ export function registerIpc(): void {
     entries: { key: string; type: 'file' | 'folder' }[],
     destDir: string
   ) => transfers.downloadEntries(accountId, bucket, entries, destDir))
-  wrap('transfer:copy', (
+  wrap('transfer:planCopy', (
     sourceAccountId: string,
     sourceBucket: string,
     entries: { key: string; type: 'file' | 'folder'; size?: number }[],
@@ -79,13 +79,31 @@ export function registerIpc(): void {
     targetBucket: string,
     targetPrefix: string
   ) =>
-    transfers.copyEntries(
+    transfers.planCopy(
       sourceAccountId,
       sourceBucket,
       entries,
       targetAccountId,
       targetBucket,
       targetPrefix
+    ))
+  wrap('transfer:copy', (
+    sourceAccountId: string,
+    sourceBucket: string,
+    entries: { key: string; type: 'file' | 'folder'; size?: number }[],
+    targetAccountId: string,
+    targetBucket: string,
+    targetPrefix: string,
+    skipExisting?: boolean
+  ) =>
+    transfers.copyEntries(
+      sourceAccountId,
+      sourceBucket,
+      entries,
+      targetAccountId,
+      targetBucket,
+      targetPrefix,
+      skipExisting
     ))
   wrap('transfer:syncBucket', (
     sourceAccountId: string,

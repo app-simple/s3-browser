@@ -278,19 +278,13 @@ async function copyObject(
   }
 }
 
-export async function copyEntries(
+/** Flatten a selection (files and folders) into copy jobs, keeping folder layout. */
+async function expandCopyJobs(
   sourceAccountId: string,
   sourceBucket: string,
   entries: { key: string; type: 'file' | 'folder'; size?: number }[],
-  targetAccountId: string,
-  targetBucket: string,
   targetPrefix: string
-): Promise<number> {
-  const source = getClient(sourceAccountId)
-  const target = getClient(targetAccountId)
-  const sameAccount = sourceAccountId === targetAccountId
-
-  // flatten folders into individual keys, keeping their layout (like downloads)
+): Promise<{ key: string; targetKey: string; size: number }[]> {
   const jobs: { key: string; targetKey: string; size: number }[] = []
   for (const e of entries) {
     if (e.type === 'folder') {
@@ -308,6 +302,50 @@ export async function copyEntries(
       const name = e.key.slice(e.key.lastIndexOf('/') + 1)
       jobs.push({ key: e.key, targetKey: `${targetPrefix}${name}`, size: e.size ?? 0 })
     }
+  }
+  return jobs
+}
+
+/** Preview a selection copy: how many objects it involves and which already exist. */
+export async function planCopy(
+  sourceAccountId: string,
+  sourceBucket: string,
+  entries: { key: string; type: 'file' | 'folder'; size?: number }[],
+  targetAccountId: string,
+  targetBucket: string,
+  targetPrefix: string
+): Promise<{ total: number; conflicts: number; sample: string[] }> {
+  const jobs = await expandCopyJobs(sourceAccountId, sourceBucket, entries, targetPrefix)
+  const existing = new Set(
+    (await listAllKeys(targetAccountId, targetBucket, targetPrefix)).map((o) => o.key)
+  )
+  const conflicts = jobs.filter((j) => existing.has(j.targetKey))
+  return {
+    total: jobs.length,
+    conflicts: conflicts.length,
+    sample: conflicts.slice(0, 5).map((j) => j.targetKey)
+  }
+}
+
+export async function copyEntries(
+  sourceAccountId: string,
+  sourceBucket: string,
+  entries: { key: string; type: 'file' | 'folder'; size?: number }[],
+  targetAccountId: string,
+  targetBucket: string,
+  targetPrefix: string,
+  skipExisting = false
+): Promise<number> {
+  const source = getClient(sourceAccountId)
+  const target = getClient(targetAccountId)
+  const sameAccount = sourceAccountId === targetAccountId
+
+  let jobs = await expandCopyJobs(sourceAccountId, sourceBucket, entries, targetPrefix)
+  if (skipExisting) {
+    const existing = new Set(
+      (await listAllKeys(targetAccountId, targetBucket, targetPrefix)).map((o) => o.key)
+    )
+    jobs = jobs.filter((j) => !existing.has(j.targetKey))
   }
 
   for (const job of jobs) {
@@ -428,6 +466,7 @@ export async function syncBucket(
 
     let doneBytes = 0
     let itemsDone = 0
+    let itemsSkipped = 0
     let failed = 0
     let firstError = ''
     let lastEmit = 0
@@ -442,6 +481,7 @@ export async function syncBucket(
       update(t.id, {
         loaded: doneBytes + active,
         itemsDone,
+        itemsSkipped,
         // oldest object still in flight — a stable "currently transferring" label
         detail: inFlight.keys().next().value
       })
@@ -458,6 +498,7 @@ export async function syncBucket(
         if (identical || (skipExisting && existing.get(job.targetKey) === job.size)) {
           doneBytes += job.size
           itemsDone++
+          itemsSkipped++
           emit()
           continue
         }
@@ -502,6 +543,7 @@ export async function syncBucket(
         error: `${failed} of ${jobs.length} object${jobs.length === 1 ? '' : 's'} failed — ${firstError}`,
         loaded: doneBytes,
         itemsDone,
+        itemsSkipped,
         detail: undefined,
         finishedAt: Date.now()
       })
@@ -511,6 +553,7 @@ export async function syncBucket(
         loaded: totalBytes,
         total: totalBytes,
         itemsDone,
+        itemsSkipped,
         detail: undefined,
         finishedAt: Date.now()
       })

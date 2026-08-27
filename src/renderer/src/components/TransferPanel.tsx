@@ -89,6 +89,7 @@ export default function TransferPanel({ transfers, onCancel, onClear, onReveal }
                   ? `${t.itemsDone ?? 0} / ${t.itemsTotal} objects`
                   : `${t.itemsTotal} objects`
               )
+              if (t.itemsSkipped) subParts.push(`${t.itemsSkipped} skipped`)
             }
             if (t.status === 'running' && speed > 0) subParts.push(`${formatBytes(speed)}/s`)
             return (
