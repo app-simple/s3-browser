@@ -98,6 +98,10 @@ export interface Transfer {
   targetAccountId?: string
   targetBucket?: string
   targetKey?: string
+  /** aggregate transfers (bucket sync): object currently being transferred */
+  detail?: string
+  itemsDone?: number
+  itemsTotal?: number
 }
 
 export interface Result<T> {

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { Transfer } from '@shared/types'
 import { formatBytes } from '@shared/format'
 import { ChevronIcon, CopyIcon, DownloadIcon, UploadIcon, XIcon } from './Icons'
@@ -10,8 +10,36 @@ interface Props {
   onReveal: (path: string) => void
 }
 
+interface SpeedSample {
+  loaded: number
+  time: number
+  speed: number
+}
+
 export default function TransferPanel({ transfers, onCancel, onClear, onReveal }: Props) {
   const [open, setOpen] = useState(true)
+  const samples = useRef(new Map<string, SpeedSample>())
+
+  /** smoothed bytes/second from the loaded deltas between renders */
+  function speedOf(t: Transfer): number {
+    if (t.status !== 'running') {
+      samples.current.delete(t.id)
+      return 0
+    }
+    const now = Date.now()
+    const prev = samples.current.get(t.id)
+    if (!prev) {
+      samples.current.set(t.id, { loaded: t.loaded, time: now, speed: 0 })
+      return 0
+    }
+    const dt = now - prev.time
+    if (dt < 500) return prev.speed
+    const instant = ((t.loaded - prev.loaded) * 1000) / dt
+    const speed = prev.speed > 0 ? prev.speed * 0.7 + instant * 0.3 : instant
+    samples.current.set(t.id, { loaded: t.loaded, time: now, speed })
+    return speed
+  }
+
   if (transfers.length === 0) return null
 
   const active = transfers.filter((t) => t.status === 'running' || t.status === 'queued').length
@@ -52,6 +80,17 @@ export default function TransferPanel({ transfers, onCancel, onClear, onReveal }
           {transfers.map((t) => {
             const pct = t.total > 0 ? Math.min(100, (t.loaded / t.total) * 100) : t.status === 'done' ? 100 : 0
             const running = t.status === 'running' || t.status === 'queued'
+            const speed = speedOf(t)
+            const subParts: string[] = []
+            if (t.status === 'running' && t.detail) subParts.push(t.detail)
+            if (t.itemsTotal) {
+              subParts.push(
+                t.status === 'running'
+                  ? `${t.itemsDone ?? 0} / ${t.itemsTotal} objects`
+                  : `${t.itemsTotal} objects`
+              )
+            }
+            if (t.status === 'running' && speed > 0) subParts.push(`${formatBytes(speed)}/s`)
             return (
               <div className="transfer-row" key={t.id}>
                 {t.kind === 'upload' ? (
@@ -61,8 +100,8 @@ export default function TransferPanel({ transfers, onCancel, onClear, onReveal }
                 ) : (
                   <CopyIcon size={13} />
                 )}
-                <span
-                  className="tname"
+                <div
+                  className="tmain"
                   title={
                     t.kind === 'copy'
                       ? `${t.bucket}/${t.key} → ${t.targetBucket}/${t.targetKey}`
@@ -70,8 +109,9 @@ export default function TransferPanel({ transfers, onCancel, onClear, onReveal }
                   }
                   onDoubleClick={() => t.kind === 'download' && onReveal(t.localPath)}
                 >
-                  {t.name}
-                </span>
+                  <span className="tname">{t.name}</span>
+                  {subParts.length > 0 && <span className="tsub">{subParts.join(' · ')}</span>}
+                </div>
                 <div className={`progress ${t.status}`}>
                   <div style={{ width: `${pct}%` }} />
                 </div>

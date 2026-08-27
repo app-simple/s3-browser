@@ -414,7 +414,7 @@ export async function syncBucket(
         size: o.size
       }))
     const totalBytes = jobs.reduce((sum, j) => sum + j.size, 0)
-    update(t.id, { total: totalBytes })
+    update(t.id, { total: totalBytes, itemsDone: 0, itemsTotal: jobs.length })
 
     // one listing of the destination beats a HEAD request per object
     const existing = skipExisting
@@ -427,6 +427,7 @@ export async function syncBucket(
       : new Map<string, number>()
 
     let doneBytes = 0
+    let itemsDone = 0
     let failed = 0
     let firstError = ''
     let lastEmit = 0
@@ -438,7 +439,12 @@ export async function syncBucket(
       lastEmit = now
       let active = 0
       for (const v of inFlight.values()) active += v
-      update(t.id, { loaded: doneBytes + active })
+      update(t.id, {
+        loaded: doneBytes + active,
+        itemsDone,
+        // oldest object still in flight — a stable "currently transferring" label
+        detail: inFlight.keys().next().value
+      })
     }
 
     let next = 0
@@ -451,6 +457,7 @@ export async function syncBucket(
           sameAccount && sourceBucket === targetBucket && job.key === job.targetKey
         if (identical || (skipExisting && existing.get(job.targetKey) === job.size)) {
           doneBytes += job.size
+          itemsDone++
           emit()
           continue
         }
@@ -472,6 +479,7 @@ export async function syncBucket(
             }
           )
           doneBytes += job.size
+          itemsDone++
         } catch (err) {
           if (controller.signal.aborted) return
           failed++
@@ -487,16 +495,25 @@ export async function syncBucket(
     )
 
     if (controller.signal.aborted) {
-      update(t.id, { status: 'cancelled', finishedAt: Date.now() })
+      update(t.id, { status: 'cancelled', detail: undefined, finishedAt: Date.now() })
     } else if (failed > 0) {
       update(t.id, {
         status: 'error',
         error: `${failed} of ${jobs.length} object${jobs.length === 1 ? '' : 's'} failed — ${firstError}`,
         loaded: doneBytes,
+        itemsDone,
+        detail: undefined,
         finishedAt: Date.now()
       })
     } else {
-      update(t.id, { status: 'done', loaded: totalBytes, total: totalBytes, finishedAt: Date.now() })
+      update(t.id, {
+        status: 'done',
+        loaded: totalBytes,
+        total: totalBytes,
+        itemsDone,
+        detail: undefined,
+        finishedAt: Date.now()
+      })
     }
     return jobs.length
   } catch (err) {
