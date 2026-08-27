@@ -30,7 +30,7 @@ export function registerIpc(): void {
     s3.invalidateClient(id)
     store.deleteAccount(id)
   })
-  wrap('accounts:test', (id: string) => s3.testConnection(id))
+  wrap('accounts:test', (input: AccountInput) => s3.testConnectionInput(input))
   wrap('accounts:encryptionAvailable', () => store.encryptionAvailable())
 
   // ---- buckets & objects ---------------------------------------------

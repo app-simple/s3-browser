@@ -17,7 +17,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { NodeHttpHandler } from '@smithy/node-http-handler'
 import { Agent } from 'node:https'
 import { getAccount, getCredentials } from './store'
-import type { Account, BucketInfo, ListResult, ObjectDetails, S3Entry } from '@shared/types'
+import type { Account, AccountInput, BucketInfo, ListResult, ObjectDetails, S3Entry } from '@shared/types'
 import { basename } from '@shared/format'
 
 const clients = new Map<string, S3Client>()
@@ -32,18 +32,11 @@ export function invalidateClient(accountId?: string): void {
   clients.clear()
 }
 
-export function getClient(accountId: string): S3Client {
-  const cached = clients.get(accountId)
-  if (cached) return cached
-
-  const account = getAccount(accountId)
-  if (!account) throw new Error(`Unknown connection: ${accountId}`)
-  const creds = getCredentials(accountId)
-  if (!creds?.accessKeyId || !creds.secretAccessKey) {
-    throw new Error('No credentials stored for this connection. Please edit and re-enter the secret key.')
-  }
-
-  const client = new S3Client({
+function buildClient(
+  account: Pick<Account, 'region' | 'endpoint' | 'forcePathStyle' | 'allowInsecureTls'>,
+  creds: { accessKeyId: string; secretAccessKey: string }
+): S3Client {
+  return new S3Client({
     region: account.region || 'us-east-1',
     endpoint: account.endpoint || undefined,
     forcePathStyle: account.forcePathStyle,
@@ -55,7 +48,20 @@ export function getClient(accountId: string): S3Client {
       ? new NodeHttpHandler({ httpsAgent: new Agent({ rejectUnauthorized: false }) })
       : undefined
   })
+}
 
+export function getClient(accountId: string): S3Client {
+  const cached = clients.get(accountId)
+  if (cached) return cached
+
+  const account = getAccount(accountId)
+  if (!account) throw new Error(`Unknown connection: ${accountId}`)
+  const creds = getCredentials(accountId)
+  if (!creds?.accessKeyId || !creds.secretAccessKey) {
+    throw new Error('No credentials stored for this connection. Please edit and re-enter the secret key.')
+  }
+
+  const client = buildClient(account, creds)
   clients.set(accountId, client)
   return client
 }
@@ -285,4 +291,28 @@ export async function presignUrl(
 export async function testConnection(accountId: string): Promise<string> {
   const buckets = await listBuckets(accountId)
   return `Connected. ${buckets.length} bucket${buckets.length === 1 ? '' : 's'} visible.`
+}
+
+/** Test unsaved dialog input with a transient client — nothing is persisted. */
+export async function testConnectionInput(input: AccountInput): Promise<string> {
+  let secret = input.secretAccessKey?.trim()
+  if (!secret && input.id) secret = getCredentials(input.id)?.secretAccessKey
+  if (!secret) throw new Error('Enter the secret access key to test this connection.')
+
+  const client = buildClient(
+    {
+      region: input.region.trim(),
+      endpoint: input.provider === 'aws' ? '' : input.endpoint.trim(),
+      forcePathStyle: !!input.forcePathStyle,
+      allowInsecureTls: !!input.allowInsecureTls
+    },
+    { accessKeyId: input.accessKeyId.trim(), secretAccessKey: secret }
+  )
+  try {
+    const res = await client.send(new ListBucketsCommand({}))
+    const n = (res.Buckets ?? []).length
+    return `Connected. ${n} bucket${n === 1 ? '' : 's'} visible.`
+  } finally {
+    client.destroy()
+  }
 }

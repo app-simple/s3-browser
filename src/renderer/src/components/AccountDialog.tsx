@@ -69,11 +69,11 @@ export default function AccountDialog({ account, onClose, onSaved }: Props) {
 
   async function handleTest(): Promise<void> {
     setTestResult(null)
-    const saved = await save()
-    if (!saved) return
+    setError(null)
     setBusy(true)
     try {
-      setTestResult(await window.api.accounts.test(saved.id))
+      // tests the current form values with a transient client — nothing is saved
+      setTestResult(await window.api.accounts.test(buildInput()))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {

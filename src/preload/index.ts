@@ -23,7 +23,7 @@ const api = {
     list: () => call<Account[]>('accounts:list'),
     save: (input: AccountInput) => call<Account>('accounts:save', input),
     remove: (id: string) => call<void>('accounts:delete', id),
-    test: (id: string) => call<string>('accounts:test', id),
+    test: (input: AccountInput) => call<string>('accounts:test', input),
     encryptionAvailable: () => call<boolean>('accounts:encryptionAvailable')
   },
   s3: {

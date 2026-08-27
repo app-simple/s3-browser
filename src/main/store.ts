@@ -90,7 +90,9 @@ export function saveAccount(input: AccountInput): Account {
 
   let secretFields: { secret: string; encrypted: boolean }
   if (input.secretAccessKey) {
-    secretFields = encryptSecret(input.secretAccessKey)
+    // secrets pasted from files or web consoles often carry stray whitespace,
+    // which breaks request signing with a misleading SignatureDoesNotMatch
+    secretFields = encryptSecret(input.secretAccessKey.trim())
   } else if (existing) {
     secretFields = { secret: existing.secret, encrypted: existing.encrypted }
   } else {
