@@ -50,6 +50,7 @@ export default function App() {
   const [prompt, setPrompt] = useState<PromptKind>(null)
   const [detailsEntry, setDetailsEntry] = useState<S3Entry | null>(null)
   const [showCopyDialog, setShowCopyDialog] = useState(false)
+  const [copyBucket, setCopyBucket] = useState<{ accountId: string; bucket: string } | null>(null)
   const [dragging, setDragging] = useState(false)
 
   const dragCounter = useRef(0)
@@ -204,6 +205,31 @@ export default function App() {
         targetAccountId,
         targetBucket,
         targetPrefix
+      )
+      if (targetAccountId === accountId && targetBucket === bucket) refresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  async function handleSyncBucket(
+    targetAccountId: string,
+    targetBucket: string,
+    targetPrefix: string,
+    skipExisting: boolean
+  ): Promise<void> {
+    if (!copyBucket) return
+    const src = copyBucket
+    setCopyBucket(null)
+    try {
+      await window.api.transfers.syncBucket(
+        src.accountId,
+        src.bucket,
+        '',
+        targetAccountId,
+        targetBucket,
+        targetPrefix,
+        skipExisting
       )
       if (targetAccountId === accountId && targetBucket === bucket) refresh()
     } catch (e) {
@@ -385,6 +411,7 @@ export default function App() {
         }}
         onRefreshBuckets={(id) => void loadBuckets(id)}
         onNewBucket={(id) => setPrompt({ kind: 'newBucket', accountId: id })}
+        onCopyBucket={(id, b) => setCopyBucket({ accountId: id, bucket: b })}
       />
 
       <main className="main">
@@ -622,6 +649,18 @@ export default function App() {
           itemCount={selectedEntries.length}
           onCancel={() => setShowCopyDialog(false)}
           onConfirm={(a, b, p) => void handleCopy(a, b, p)}
+        />
+      )}
+
+      {copyBucket && (
+        <CopyDialog
+          accounts={accounts}
+          sourceAccountId={copyBucket.accountId}
+          sourceBucket={copyBucket.bucket}
+          itemCount={0}
+          bucketMode
+          onCancel={() => setCopyBucket(null)}
+          onConfirm={(a, b, p, skip) => void handleSyncBucket(a, b, p, skip)}
         />
       )}
 

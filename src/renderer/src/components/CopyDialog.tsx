@@ -6,8 +6,15 @@ interface Props {
   sourceAccountId: string
   sourceBucket: string
   itemCount: number
+  /** copy the whole bucket (resumable sync) instead of the current selection */
+  bucketMode?: boolean
   onCancel: () => void
-  onConfirm: (targetAccountId: string, targetBucket: string, targetPrefix: string) => void
+  onConfirm: (
+    targetAccountId: string,
+    targetBucket: string,
+    targetPrefix: string,
+    skipExisting: boolean
+  ) => void
 }
 
 /** '' stays '', anything else becomes a clean prefix ending in '/' */
@@ -25,6 +32,7 @@ export default function CopyDialog({
   sourceAccountId,
   sourceBucket,
   itemCount,
+  bucketMode = false,
   onCancel,
   onConfirm
 }: Props) {
@@ -32,6 +40,7 @@ export default function CopyDialog({
   const [buckets, setBuckets] = useState<BucketInfo[] | null>(null)
   const [bucket, setBucket] = useState('')
   const [folder, setFolder] = useState('')
+  const [skipExisting, setSkipExisting] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -61,7 +70,9 @@ export default function CopyDialog({
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
       <div className="modal" style={{ maxWidth: 440 }}>
         <div className="modal-head">
-          Copy {itemCount} item{itemCount === 1 ? '' : 's'} to…
+          {bucketMode
+            ? `Copy bucket "${sourceBucket}" to…`
+            : `Copy ${itemCount} item${itemCount === 1 ? '' : 's'} to…`}
         </div>
         <div className="modal-body">
           <div className="field">
@@ -100,7 +111,7 @@ export default function CopyDialog({
               onChange={(e) => setFolder(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && bucket) {
-                  onConfirm(accountId, bucket, normalizePrefix(folder))
+                  onConfirm(accountId, bucket, normalizePrefix(folder), skipExisting)
                 }
                 if (e.key === 'Escape') onCancel()
               }}
@@ -111,6 +122,23 @@ export default function CopyDialog({
                 : 'Objects are streamed directly between the providers without touching your disk.'}
             </div>
           </div>
+          {bucketMode && (
+            <div className="field">
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  style={{ width: 'auto' }}
+                  checked={skipExisting}
+                  onChange={(e) => setSkipExisting(e.target.checked)}
+                />
+                Skip objects that already exist at the destination (same size)
+              </label>
+              <div className="hint">
+                Makes the copy resumable: run it again and only new or changed objects are
+                transferred.
+              </div>
+            </div>
+          )}
           {error && <div className="hint" style={{ color: 'var(--danger)' }}>{error}</div>}
         </div>
         <div className="modal-foot">
@@ -118,7 +146,7 @@ export default function CopyDialog({
           <button
             className="primary"
             disabled={!bucket}
-            onClick={() => onConfirm(accountId, bucket, normalizePrefix(folder))}
+            onClick={() => onConfirm(accountId, bucket, normalizePrefix(folder), skipExisting)}
           >
             Copy
           </button>

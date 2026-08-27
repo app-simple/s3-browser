@@ -1,5 +1,5 @@
 import { Upload } from '@aws-sdk/lib-storage'
-import { CopyObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3'
+import { CopyObjectCommand, GetObjectCommand, type S3Client } from '@aws-sdk/client-s3'
 import { createReadStream, createWriteStream, mkdirSync, readdirSync, statSync } from 'node:fs'
 import { pipeline } from 'node:stream/promises'
 import { Readable, Transform } from 'node:stream'
@@ -225,6 +225,59 @@ export async function downloadEntries(
 /** CopyObject rejects sources above 5 GiB; larger objects fall back to streaming. */
 const COPY_OBJECT_LIMIT = 5 * 1024 * 1024 * 1024
 
+/** Copy one object: server-side within an account, streamed across accounts. */
+async function copyObject(
+  source: S3Client,
+  target: S3Client,
+  sameAccount: boolean,
+  sourceBucket: string,
+  key: string,
+  targetBucket: string,
+  targetKey: string,
+  size: number,
+  controller: AbortController,
+  onProgress: (loaded: number) => void
+): Promise<void> {
+  if (sameAccount && size <= COPY_OBJECT_LIMIT) {
+    // server-side copy: the data never leaves the provider
+    await source.send(
+      new CopyObjectCommand({
+        Bucket: targetBucket,
+        CopySource: `${sourceBucket}/${key}`.split('/').map(encodeURIComponent).join('/'),
+        Key: targetKey
+      }),
+      { abortSignal: controller.signal }
+    )
+    onProgress(size)
+  } else {
+    // cross-account: pipe the source stream straight into a multipart
+    // upload — only part buffers in memory, nothing on disk
+    const res = await source.send(
+      new GetObjectCommand({ Bucket: sourceBucket, Key: key }),
+      { abortSignal: controller.signal }
+    )
+    const total = res.ContentLength ?? size
+    const upload = new Upload({
+      client: target,
+      params: {
+        Bucket: targetBucket,
+        Key: targetKey,
+        Body: res.Body as Readable,
+        ContentType: res.ContentType,
+        Metadata: res.Metadata
+      },
+      queueSize: 4,
+      // stay under the 10k part limit for very large objects
+      partSize: Math.max(8 * 1024 * 1024, Math.ceil(total / 9000)),
+      leavePartsOnError: false,
+      abortController: controller
+    })
+    upload.on('httpUploadProgress', (p) => onProgress(p.loaded ?? 0))
+    await upload.done()
+    onProgress(total)
+  }
+}
+
 export async function copyEntries(
   sourceAccountId: string,
   sourceBucket: string,
@@ -279,49 +332,24 @@ export async function copyEntries(
 
     try {
       update(t.id, { status: 'running' })
-
-      if (sameAccount && job.size <= COPY_OBJECT_LIMIT) {
-        // server-side copy: the data never leaves the provider
-        await source.send(
-          new CopyObjectCommand({
-            Bucket: targetBucket,
-            CopySource: `${sourceBucket}/${job.key}`.split('/').map(encodeURIComponent).join('/'),
-            Key: job.targetKey
-          }),
-          { abortSignal: controller.signal }
-        )
-        update(t.id, { status: 'done', loaded: job.size, finishedAt: Date.now() })
-      } else {
-        // cross-account: pipe the source stream straight into a multipart
-        // upload — only part buffers in memory, nothing on disk
-        const res = await source.send(
-          new GetObjectCommand({ Bucket: sourceBucket, Key: job.key }),
-          { abortSignal: controller.signal }
-        )
-        const total = res.ContentLength ?? job.size
-        update(t.id, { total })
-
-        const upload = new Upload({
-          client: target,
-          params: {
-            Bucket: targetBucket,
-            Key: job.targetKey,
-            Body: res.Body as Readable,
-            ContentType: res.ContentType,
-            Metadata: res.Metadata
-          },
-          queueSize: 4,
-          // stay under the 10k part limit for very large objects
-          partSize: Math.max(8 * 1024 * 1024, Math.ceil(total / 9000)),
-          leavePartsOnError: false,
-          abortController: controller
-        })
-        upload.on('httpUploadProgress', (p) => {
-          update(t.id, { loaded: p.loaded ?? 0 })
-        })
-        await upload.done()
-        update(t.id, { status: 'done', loaded: total, total, finishedAt: Date.now() })
-      }
+      let lastLoaded = 0
+      await copyObject(
+        source,
+        target,
+        sameAccount,
+        sourceBucket,
+        job.key,
+        targetBucket,
+        job.targetKey,
+        job.size,
+        controller,
+        (loaded) => {
+          lastLoaded = loaded
+          update(t.id, { loaded })
+        }
+      )
+      const finalTotal = Math.max(job.size, lastLoaded)
+      update(t.id, { status: 'done', loaded: finalTotal, total: finalTotal, finishedAt: Date.now() })
     } catch (err) {
       if (controller.signal.aborted) {
         update(t.id, { status: 'cancelled', finishedAt: Date.now() })
@@ -337,4 +365,152 @@ export async function copyEntries(
     }
   }
   return jobs.length
+}
+
+const SYNC_CONCURRENCY = 4
+
+/**
+ * Copy everything under sourcePrefix into targetBucket/targetPrefix as ONE
+ * aggregate transfer. With skipExisting, objects already present at the
+ * destination with the same size are skipped, so re-runs resume cheaply.
+ */
+export async function syncBucket(
+  sourceAccountId: string,
+  sourceBucket: string,
+  sourcePrefix: string,
+  targetAccountId: string,
+  targetBucket: string,
+  targetPrefix: string,
+  skipExisting: boolean
+): Promise<number> {
+  const source = getClient(sourceAccountId)
+  const target = getClient(targetAccountId)
+  const sameAccount = sourceAccountId === targetAccountId
+  if (sameAccount && sourceBucket === targetBucket && targetPrefix === sourcePrefix) {
+    throw new Error('Source and destination are identical')
+  }
+
+  const t = create(
+    'copy',
+    `${sourceBucket} → ${targetBucket}`,
+    sourceAccountId,
+    sourceBucket,
+    sourcePrefix,
+    '',
+    0,
+    { targetAccountId, targetBucket, targetKey: targetPrefix }
+  )
+  const controller = new AbortController()
+  aborters.set(t.id, controller)
+
+  try {
+    update(t.id, { status: 'running' })
+
+    const jobs = (await listAllKeys(sourceAccountId, sourceBucket, sourcePrefix))
+      .filter((o) => !o.key.endsWith('/'))
+      .map((o) => ({
+        key: o.key,
+        targetKey: `${targetPrefix}${o.key.slice(sourcePrefix.length)}`,
+        size: o.size
+      }))
+    const totalBytes = jobs.reduce((sum, j) => sum + j.size, 0)
+    update(t.id, { total: totalBytes })
+
+    // one listing of the destination beats a HEAD request per object
+    const existing = skipExisting
+      ? new Map(
+          (await listAllKeys(targetAccountId, targetBucket, targetPrefix)).map((o) => [
+            o.key,
+            o.size
+          ])
+        )
+      : new Map<string, number>()
+
+    let doneBytes = 0
+    let failed = 0
+    let firstError = ''
+    let lastEmit = 0
+    const inFlight = new Map<string, number>()
+
+    const emit = (): void => {
+      const now = Date.now()
+      if (now - lastEmit < 120) return
+      lastEmit = now
+      let active = 0
+      for (const v of inFlight.values()) active += v
+      update(t.id, { loaded: doneBytes + active })
+    }
+
+    let next = 0
+    const worker = async (): Promise<void> => {
+      while (!controller.signal.aborted) {
+        const i = next++
+        if (i >= jobs.length) return
+        const job = jobs[i]
+        const identical =
+          sameAccount && sourceBucket === targetBucket && job.key === job.targetKey
+        if (identical || (skipExisting && existing.get(job.targetKey) === job.size)) {
+          doneBytes += job.size
+          emit()
+          continue
+        }
+        inFlight.set(job.key, 0)
+        try {
+          await copyObject(
+            source,
+            target,
+            sameAccount,
+            sourceBucket,
+            job.key,
+            targetBucket,
+            job.targetKey,
+            job.size,
+            controller,
+            (loaded) => {
+              inFlight.set(job.key, loaded)
+              emit()
+            }
+          )
+          doneBytes += job.size
+        } catch (err) {
+          if (controller.signal.aborted) return
+          failed++
+          if (!firstError) firstError = err instanceof Error ? err.message : String(err)
+        } finally {
+          inFlight.delete(job.key)
+          emit()
+        }
+      }
+    }
+    await Promise.all(
+      Array.from({ length: Math.min(SYNC_CONCURRENCY, Math.max(jobs.length, 1)) }, () => worker())
+    )
+
+    if (controller.signal.aborted) {
+      update(t.id, { status: 'cancelled', finishedAt: Date.now() })
+    } else if (failed > 0) {
+      update(t.id, {
+        status: 'error',
+        error: `${failed} of ${jobs.length} object${jobs.length === 1 ? '' : 's'} failed — ${firstError}`,
+        loaded: doneBytes,
+        finishedAt: Date.now()
+      })
+    } else {
+      update(t.id, { status: 'done', loaded: totalBytes, total: totalBytes, finishedAt: Date.now() })
+    }
+    return jobs.length
+  } catch (err) {
+    if (controller.signal.aborted) {
+      update(t.id, { status: 'cancelled', finishedAt: Date.now() })
+    } else {
+      update(t.id, {
+        status: 'error',
+        error: err instanceof Error ? err.message : String(err),
+        finishedAt: Date.now()
+      })
+    }
+    return 0
+  } finally {
+    aborters.delete(t.id)
+  }
 }

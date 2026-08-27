@@ -1,6 +1,14 @@
 import { useState } from 'react'
 import type { Account, BucketInfo } from '@shared/types'
-import { BucketIcon, ServerIcon, PlusIcon, PencilIcon, RefreshIcon, ChevronIcon } from './Icons'
+import {
+  BucketIcon,
+  CopyIcon,
+  ServerIcon,
+  PlusIcon,
+  PencilIcon,
+  RefreshIcon,
+  ChevronIcon
+} from './Icons'
 
 interface Props {
   accounts: Account[]
@@ -15,6 +23,7 @@ interface Props {
   onEditAccount: (account: Account) => void
   onRefreshBuckets: (accountId: string) => void
   onNewBucket: (accountId: string) => void
+  onCopyBucket: (accountId: string, bucket: string) => void
 }
 
 export default function Sidebar({
@@ -29,7 +38,8 @@ export default function Sidebar({
   onAddAccount,
   onEditAccount,
   onRefreshBuckets,
-  onNewBucket
+  onNewBucket,
+  onCopyBucket
 }: Props) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
 
@@ -112,6 +122,17 @@ export default function Sidebar({
                     >
                       <BucketIcon size={13} />
                       <span className="name">{b.name}</span>
+                      <button
+                        className="ghost"
+                        title="Copy bucket contents to another bucket"
+                        style={{ padding: 2 }}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onCopyBucket(acc.id, b.name)
+                        }}
+                      >
+                        <CopyIcon size={12} />
+                      </button>
                     </div>
                   ))}
                   {list && list.length === 0 && <div className="tree-empty">No buckets</div>}

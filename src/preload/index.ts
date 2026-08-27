@@ -67,6 +67,25 @@ const api = {
         targetBucket,
         targetPrefix
       ),
+    syncBucket: (
+      sourceAccountId: string,
+      sourceBucket: string,
+      sourcePrefix: string,
+      targetAccountId: string,
+      targetBucket: string,
+      targetPrefix: string,
+      skipExisting: boolean
+    ) =>
+      call<number>(
+        'transfer:syncBucket',
+        sourceAccountId,
+        sourceBucket,
+        sourcePrefix,
+        targetAccountId,
+        targetBucket,
+        targetPrefix,
+        skipExisting
+      ),
     list: () => call<Transfer[]>('transfer:list'),
     cancel: (id: string) => call<void>('transfer:cancel', id),
     clearFinished: () => call<void>('transfer:clear'),

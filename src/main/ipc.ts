@@ -87,6 +87,24 @@ export function registerIpc(): void {
       targetBucket,
       targetPrefix
     ))
+  wrap('transfer:syncBucket', (
+    sourceAccountId: string,
+    sourceBucket: string,
+    sourcePrefix: string,
+    targetAccountId: string,
+    targetBucket: string,
+    targetPrefix: string,
+    skipExisting: boolean
+  ) =>
+    transfers.syncBucket(
+      sourceAccountId,
+      sourceBucket,
+      sourcePrefix,
+      targetAccountId,
+      targetBucket,
+      targetPrefix,
+      skipExisting
+    ))
   wrap('transfer:list', () => transfers.listTransfers())
   wrap('transfer:cancel', (id: string) => transfers.cancelTransfer(id))
   wrap('transfer:clear', () => transfers.clearFinishedTransfers())
