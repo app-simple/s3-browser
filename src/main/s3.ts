@@ -299,10 +299,11 @@ export async function testConnectionInput(input: AccountInput): Promise<string> 
   if (!secret && input.id) secret = getCredentials(input.id)?.secretAccessKey
   if (!secret) throw new Error('Enter the secret access key to test this connection.')
 
+  const endpoint = input.provider === 'aws' ? '' : input.endpoint.trim()
   const client = buildClient(
     {
       region: input.region.trim(),
-      endpoint: input.provider === 'aws' ? '' : input.endpoint.trim(),
+      endpoint,
       forcePathStyle: !!input.forcePathStyle,
       allowInsecureTls: !!input.allowInsecureTls
     },
@@ -312,7 +313,32 @@ export async function testConnectionInput(input: AccountInput): Promise<string> 
     const res = await client.send(new ListBucketsCommand({}))
     const n = (res.Buckets ?? []).length
     return `Connected. ${n} bucket${n === 1 ? '' : 's'} visible.`
+  } catch (err) {
+    if (err instanceof Error && err.name === 'SignatureDoesNotMatch') {
+      throw new Error(signatureHelp(err.message, endpoint))
+    }
+    throw err
   } finally {
     client.destroy()
   }
+}
+
+/** Signature errors are almost always keys or a misbehaving reverse proxy — say so. */
+function signatureHelp(message: string, endpoint: string): string {
+  const hints = ['• Re-check the access key ID and the secret access key.']
+  let pathname = ''
+  try {
+    pathname = endpoint ? new URL(endpoint).pathname.replace(/\/+$/, '') : ''
+  } catch {
+    /* leave pathname empty */
+  }
+  if (pathname) {
+    hints.push(
+      `• The endpoint contains a path ("${pathname}"). If a reverse proxy strips this prefix before the request reaches the server, signing always fails — the S3 API usually needs its own hostname or port instead of a sub-path.`
+    )
+  }
+  hints.push(
+    '• If a reverse proxy sits in front of the server, it must forward the Host header unchanged (nginx: "proxy_set_header Host $http_host;") and must not rewrite the request path.'
+  )
+  return `${message}\n${hints.join('\n')}`
 }

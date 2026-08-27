@@ -230,6 +230,7 @@ td.col-size, td.col-date, td.col-class { color: var(--text-dim); font-variant-nu
   display: flex;
   gap: 10px;
   align-items: flex-start;
+  white-space: pre-line;
   user-select: text;
 }
 .banner.error { border-color: #5c2a2d; background: #2a1618; color: #ff9ea1; }
