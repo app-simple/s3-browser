@@ -71,6 +71,22 @@ export function registerIpc(): void {
     entries: { key: string; type: 'file' | 'folder' }[],
     destDir: string
   ) => transfers.downloadEntries(accountId, bucket, entries, destDir))
+  wrap('transfer:copy', (
+    sourceAccountId: string,
+    sourceBucket: string,
+    entries: { key: string; type: 'file' | 'folder'; size?: number }[],
+    targetAccountId: string,
+    targetBucket: string,
+    targetPrefix: string
+  ) =>
+    transfers.copyEntries(
+      sourceAccountId,
+      sourceBucket,
+      entries,
+      targetAccountId,
+      targetBucket,
+      targetPrefix
+    ))
   wrap('transfer:list', () => transfers.listTransfers())
   wrap('transfer:cancel', (id: string) => transfers.cancelTransfer(id))
   wrap('transfer:clear', () => transfers.clearFinishedTransfers())

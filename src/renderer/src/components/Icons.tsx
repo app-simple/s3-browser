@@ -103,6 +103,13 @@ export const InfoIcon = ({ size = 14, className }: Props) => (
   </svg>
 )
 
+export const CopyIcon = ({ size = 14, className }: Props) => (
+  <svg {...base(size)} className={`icon ${className ?? ''}`}>
+    <rect x="5.6" y="5.6" width="8" height="8" rx="1" />
+    <path d="M10.4 5.6V3.4a1 1 0 0 0-1-1H3.4a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.2" />
+  </svg>
+)
+
 export const XIcon = ({ size = 13, className }: Props) => (
   <svg {...base(size)} className={`icon ${className ?? ''}`}>
     <path d="M4 4l8 8M12 4l-8 8" />

@@ -1,5 +1,5 @@
 import { Upload } from '@aws-sdk/lib-storage'
-import { GetObjectCommand } from '@aws-sdk/client-s3'
+import { CopyObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3'
 import { createReadStream, createWriteStream, mkdirSync, readdirSync, statSync } from 'node:fs'
 import { pipeline } from 'node:stream/promises'
 import { Readable, Transform } from 'node:stream'
@@ -25,7 +25,8 @@ function create(
   bucket: string,
   key: string,
   localPath: string,
-  total: number
+  total: number,
+  extra: Partial<Transfer> = {}
 ): Transfer {
   const t: Transfer = {
     id: randomUUID(),
@@ -38,7 +39,8 @@ function create(
     loaded: 0,
     total,
     status: 'queued',
-    startedAt: Date.now()
+    startedAt: Date.now(),
+    ...extra
   }
   transfers.set(t.id, t)
   broadcast(t)
@@ -203,6 +205,123 @@ export async function downloadEntries(
       const body = res.Body as Readable
       await pipeline(body, meter, createWriteStream(job.localPath))
       update(t.id, { status: 'done', loaded: total, total, finishedAt: Date.now() })
+    } catch (err) {
+      if (controller.signal.aborted) {
+        update(t.id, { status: 'cancelled', finishedAt: Date.now() })
+      } else {
+        update(t.id, {
+          status: 'error',
+          error: err instanceof Error ? err.message : String(err),
+          finishedAt: Date.now()
+        })
+      }
+    } finally {
+      aborters.delete(t.id)
+    }
+  }
+  return jobs.length
+}
+
+/** CopyObject rejects sources above 5 GiB; larger objects fall back to streaming. */
+const COPY_OBJECT_LIMIT = 5 * 1024 * 1024 * 1024
+
+export async function copyEntries(
+  sourceAccountId: string,
+  sourceBucket: string,
+  entries: { key: string; type: 'file' | 'folder'; size?: number }[],
+  targetAccountId: string,
+  targetBucket: string,
+  targetPrefix: string
+): Promise<number> {
+  const source = getClient(sourceAccountId)
+  const target = getClient(targetAccountId)
+  const sameAccount = sourceAccountId === targetAccountId
+
+  // flatten folders into individual keys, keeping their layout (like downloads)
+  const jobs: { key: string; targetKey: string; size: number }[] = []
+  for (const e of entries) {
+    if (e.type === 'folder') {
+      const parentLen = e.key.replace(/\/$/, '').lastIndexOf('/') + 1
+      const all = await listAllKeys(sourceAccountId, sourceBucket, e.key)
+      for (const obj of all) {
+        if (obj.key.endsWith('/')) continue
+        jobs.push({
+          key: obj.key,
+          targetKey: `${targetPrefix}${obj.key.slice(parentLen)}`,
+          size: obj.size
+        })
+      }
+    } else {
+      const name = e.key.slice(e.key.lastIndexOf('/') + 1)
+      jobs.push({ key: e.key, targetKey: `${targetPrefix}${name}`, size: e.size ?? 0 })
+    }
+  }
+
+  for (const job of jobs) {
+    const name = job.key.slice(job.key.lastIndexOf('/') + 1)
+    const t = create('copy', name, sourceAccountId, sourceBucket, job.key, '', job.size, {
+      targetAccountId,
+      targetBucket,
+      targetKey: job.targetKey
+    })
+
+    if (sameAccount && sourceBucket === targetBucket && job.key === job.targetKey) {
+      update(t.id, {
+        status: 'error',
+        error: 'Source and destination are the same object',
+        finishedAt: Date.now()
+      })
+      continue
+    }
+
+    const controller = new AbortController()
+    aborters.set(t.id, controller)
+
+    try {
+      update(t.id, { status: 'running' })
+
+      if (sameAccount && job.size <= COPY_OBJECT_LIMIT) {
+        // server-side copy: the data never leaves the provider
+        await source.send(
+          new CopyObjectCommand({
+            Bucket: targetBucket,
+            CopySource: `${sourceBucket}/${job.key}`.split('/').map(encodeURIComponent).join('/'),
+            Key: job.targetKey
+          }),
+          { abortSignal: controller.signal }
+        )
+        update(t.id, { status: 'done', loaded: job.size, finishedAt: Date.now() })
+      } else {
+        // cross-account: pipe the source stream straight into a multipart
+        // upload — only part buffers in memory, nothing on disk
+        const res = await source.send(
+          new GetObjectCommand({ Bucket: sourceBucket, Key: job.key }),
+          { abortSignal: controller.signal }
+        )
+        const total = res.ContentLength ?? job.size
+        update(t.id, { total })
+
+        const upload = new Upload({
+          client: target,
+          params: {
+            Bucket: targetBucket,
+            Key: job.targetKey,
+            Body: res.Body as Readable,
+            ContentType: res.ContentType,
+            Metadata: res.Metadata
+          },
+          queueSize: 4,
+          // stay under the 10k part limit for very large objects
+          partSize: Math.max(8 * 1024 * 1024, Math.ceil(total / 9000)),
+          leavePartsOnError: false,
+          abortController: controller
+        })
+        upload.on('httpUploadProgress', (p) => {
+          update(t.id, { loaded: p.loaded ?? 0 })
+        })
+        await upload.done()
+        update(t.id, { status: 'done', loaded: total, total, finishedAt: Date.now() })
+      }
     } catch (err) {
       if (controller.signal.aborted) {
         update(t.id, { status: 'cancelled', finishedAt: Date.now() })

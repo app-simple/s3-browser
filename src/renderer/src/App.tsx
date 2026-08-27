@@ -7,7 +7,9 @@ import ObjectTable from './components/ObjectTable'
 import TransferPanel from './components/TransferPanel'
 import PromptDialog from './components/PromptDialog'
 import DetailsDialog from './components/DetailsDialog'
+import CopyDialog from './components/CopyDialog'
 import {
+  CopyIcon,
   DownloadIcon,
   NewFolderIcon,
   PencilIcon,
@@ -47,6 +49,7 @@ export default function App() {
   const [showAccountDialog, setShowAccountDialog] = useState(false)
   const [prompt, setPrompt] = useState<PromptKind>(null)
   const [detailsEntry, setDetailsEntry] = useState<S3Entry | null>(null)
+  const [showCopyDialog, setShowCopyDialog] = useState(false)
   const [dragging, setDragging] = useState(false)
 
   const dragCounter = useRef(0)
@@ -181,6 +184,28 @@ export default function App() {
         selectedEntries.map((e) => ({ key: e.key, type: e.type })),
         dest
       )
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  async function handleCopy(
+    targetAccountId: string,
+    targetBucket: string,
+    targetPrefix: string
+  ): Promise<void> {
+    if (!accountId || !bucket || selectedEntries.length === 0) return
+    setShowCopyDialog(false)
+    try {
+      await window.api.transfers.copy(
+        accountId,
+        bucket,
+        selectedEntries.map((e) => ({ key: e.key, type: e.type, size: e.size })),
+        targetAccountId,
+        targetBucket,
+        targetPrefix
+      )
+      if (targetAccountId === accountId && targetBucket === bucket) refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -411,6 +436,9 @@ export default function App() {
             <button disabled={selectedEntries.length === 0} onClick={handleDownload}>
               <DownloadIcon /> Download
             </button>
+            <button disabled={selectedEntries.length === 0} onClick={() => setShowCopyDialog(true)}>
+              <CopyIcon /> Copy to…
+            </button>
             <button
               disabled={selectedEntries.length !== 1}
               onClick={() => setPrompt({ kind: 'rename', entry: selectedEntries[0] })}
@@ -583,6 +611,17 @@ export default function App() {
           }
           onCancel={() => setPrompt(null)}
           onConfirm={(v) => void handlePrompt(v)}
+        />
+      )}
+
+      {showCopyDialog && accountId && bucket && (
+        <CopyDialog
+          accounts={accounts}
+          sourceAccountId={accountId}
+          sourceBucket={bucket}
+          itemCount={selectedEntries.length}
+          onCancel={() => setShowCopyDialog(false)}
+          onConfirm={(a, b, p) => void handleCopy(a, b, p)}
         />
       )}
 

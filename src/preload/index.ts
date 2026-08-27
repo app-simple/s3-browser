@@ -50,6 +50,23 @@ const api = {
       call<number>('transfer:upload', accountId, bucket, prefix, paths),
     download: (accountId: string, bucket: string, entries: EntryRef[], destDir: string) =>
       call<number>('transfer:download', accountId, bucket, entries, destDir),
+    copy: (
+      sourceAccountId: string,
+      sourceBucket: string,
+      entries: (EntryRef & { size?: number })[],
+      targetAccountId: string,
+      targetBucket: string,
+      targetPrefix: string
+    ) =>
+      call<number>(
+        'transfer:copy',
+        sourceAccountId,
+        sourceBucket,
+        entries,
+        targetAccountId,
+        targetBucket,
+        targetPrefix
+      ),
     list: () => call<Transfer[]>('transfer:list'),
     cancel: (id: string) => call<void>('transfer:cancel', id),
     clearFinished: () => call<void>('transfer:clear'),

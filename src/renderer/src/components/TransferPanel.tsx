@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { Transfer } from '@shared/types'
 import { formatBytes } from '@shared/format'
-import { ChevronIcon, DownloadIcon, UploadIcon, XIcon } from './Icons'
+import { ChevronIcon, CopyIcon, DownloadIcon, UploadIcon, XIcon } from './Icons'
 
 interface Props {
   transfers: Transfer[]
@@ -54,10 +54,20 @@ export default function TransferPanel({ transfers, onCancel, onClear, onReveal }
             const running = t.status === 'running' || t.status === 'queued'
             return (
               <div className="transfer-row" key={t.id}>
-                {t.kind === 'upload' ? <UploadIcon size={13} /> : <DownloadIcon size={13} />}
+                {t.kind === 'upload' ? (
+                  <UploadIcon size={13} />
+                ) : t.kind === 'download' ? (
+                  <DownloadIcon size={13} />
+                ) : (
+                  <CopyIcon size={13} />
+                )}
                 <span
                   className="tname"
-                  title={`${t.bucket}/${t.key}`}
+                  title={
+                    t.kind === 'copy'
+                      ? `${t.bucket}/${t.key} → ${t.targetBucket}/${t.targetKey}`
+                      : `${t.bucket}/${t.key}`
+                  }
                   onDoubleClick={() => t.kind === 'download' && onReveal(t.localPath)}
                 >
                   {t.name}

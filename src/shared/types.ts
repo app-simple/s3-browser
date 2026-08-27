@@ -77,7 +77,7 @@ export interface ObjectDetails {
   metadata: Record<string, string>
 }
 
-export type TransferKind = 'upload' | 'download'
+export type TransferKind = 'upload' | 'download' | 'copy'
 export type TransferStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled'
 
 export interface Transfer {
@@ -94,6 +94,10 @@ export interface Transfer {
   error?: string
   startedAt: number
   finishedAt?: number
+  /** destination of an s3-to-s3 copy */
+  targetAccountId?: string
+  targetBucket?: string
+  targetKey?: string
 }
 
 export interface Result<T> {
