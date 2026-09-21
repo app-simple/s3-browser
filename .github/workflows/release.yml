@@ -66,7 +66,7 @@ jobs:
   # parallel matrix jobs never race to create the same GitHub release.
   publish:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: app-simple-prod-new
     steps:
       - uses: actions/checkout@v7
 

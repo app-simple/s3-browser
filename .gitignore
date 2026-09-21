@@ -7,3 +7,4 @@ release/
 .vite/
 *.tsbuildinfo
 _to_delete/
+.playwright-mcp/
