@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { Account, BucketInfo } from '@shared/types'
+import ContextMenu, { type MenuItem } from './ContextMenu'
 import {
   BucketIcon,
   CopyIcon,
@@ -24,6 +25,8 @@ interface Props {
   onRefreshBuckets: (accountId: string) => void
   onNewBucket: (accountId: string) => void
   onCopyBucket: (accountId: string, bucket: string) => void
+  onRemoveAccount: (account: Account) => void
+  onDeleteBucket: (accountId: string, bucket: string) => void
 }
 
 export default function Sidebar({
@@ -39,12 +42,38 @@ export default function Sidebar({
   onEditAccount,
   onRefreshBuckets,
   onNewBucket,
-  onCopyBucket
+  onCopyBucket,
+  onRemoveAccount,
+  onDeleteBucket
 }: Props) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null)
 
   function toggle(id: string): void {
     setCollapsed((c) => ({ ...c, [id]: !c[id] }))
+  }
+
+  function openMenu(e: React.MouseEvent, items: MenuItem[]): void {
+    e.preventDefault()
+    e.stopPropagation()
+    setMenu({ x: e.clientX, y: e.clientY, items })
+  }
+
+  function accountMenu(acc: Account): MenuItem[] {
+    return [
+      { label: 'Edit connection', onClick: () => onEditAccount(acc) },
+      { label: 'New bucket', onClick: () => onNewBucket(acc.id) },
+      { label: 'Refresh buckets', onClick: () => onRefreshBuckets(acc.id) },
+      { label: 'Remove connection', danger: true, onClick: () => onRemoveAccount(acc) }
+    ]
+  }
+
+  function bucketMenu(accountId: string, bucket: string): MenuItem[] {
+    return [
+      { label: 'Open', onClick: () => onSelectBucket(accountId, bucket) },
+      { label: 'Copy contents to…', onClick: () => onCopyBucket(accountId, bucket) },
+      { label: 'Delete bucket', danger: true, onClick: () => onDeleteBucket(accountId, bucket) }
+    ]
   }
 
   return (
@@ -76,6 +105,7 @@ export default function Sidebar({
                   onSelectAccount(acc.id)
                   if (collapsed[acc.id]) toggle(acc.id)
                 }}
+                onContextMenu={(e) => openMenu(e, accountMenu(acc))}
               >
                 <span
                   onClick={(e) => {
@@ -118,6 +148,7 @@ export default function Sidebar({
                         activeAccountId === acc.id && activeBucket === b.name ? 'active' : ''
                       }`}
                       onClick={() => onSelectBucket(acc.id, b.name)}
+                      onContextMenu={(e) => openMenu(e, bucketMenu(acc.id, b.name))}
                       title={b.name}
                     >
                       <BucketIcon size={13} />
@@ -166,6 +197,8 @@ export default function Sidebar({
           <PlusIcon /> Add connection
         </button>
       </div>
+
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
     </aside>
   )
 }

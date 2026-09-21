@@ -306,22 +306,28 @@ export default function App() {
     }
   }
 
-  async function handleDeleteBucket(): Promise<void> {
-    if (!accountId || !bucket) return
+  async function handleDeleteBucketByName(accId: string, name: string): Promise<void> {
     const ok = await window.api.dialog.confirm(
-      `Delete bucket "${bucket}"?`,
+      `Delete bucket "${name}"?`,
       'The bucket must already be empty. This cannot be undone.',
       'Delete bucket'
     )
     if (!ok) return
     try {
-      await window.api.s3.deleteBucket(accountId, bucket)
-      setBucket(null)
-      setEntries([])
-      await loadBuckets(accountId)
+      await window.api.s3.deleteBucket(accId, name)
+      if (accountId === accId && bucket === name) {
+        setBucket(null)
+        setEntries([])
+      }
+      await loadBuckets(accId)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
+  }
+
+  async function handleDeleteBucket(): Promise<void> {
+    if (!accountId || !bucket) return
+    await handleDeleteBucketByName(accountId, bucket)
   }
 
   async function handlePrompt(value: string): Promise<void> {
@@ -457,6 +463,8 @@ export default function App() {
         onRefreshBuckets={(id) => void loadBuckets(id)}
         onNewBucket={(id) => setPrompt({ kind: 'newBucket', accountId: id })}
         onCopyBucket={(id, b) => setCopyBucket({ accountId: id, bucket: b })}
+        onRemoveAccount={(acc) => void handleDeleteAccount(acc)}
+        onDeleteBucket={(id, b) => void handleDeleteBucketByName(id, b)}
       />
 
       <main className="main">

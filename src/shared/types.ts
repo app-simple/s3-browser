@@ -7,6 +7,7 @@ export type ProviderId =
   | 'digitalocean'
   | 'cloudflare'
   | 'scaleway'
+  | 'stackit'
   | 'ionos'
   | 'storj'
   | 'custom'

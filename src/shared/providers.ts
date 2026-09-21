@@ -84,6 +84,15 @@ export const PROVIDERS: ProviderPreset[] = [
     forcePathStyle: false
   },
   {
+    id: 'stackit',
+    label: 'STACKIT Object Storage',
+    endpointTemplate: 'https://object.storage.{region}.onstackit.cloud',
+    regions: ['eu01', 'eu02'],
+    defaultRegion: 'eu01',
+    forcePathStyle: true,
+    hint: 'Region eu01 (Germany) or eu02 (Austria). Use the credentials from your STACKIT Object Storage credentials group.'
+  },
+  {
     id: 'ionos',
     label: 'IONOS Object Storage',
     endpointTemplate: 'https://s3-{region}.ionoscloud.com',

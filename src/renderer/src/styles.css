@@ -239,6 +239,33 @@ td.col-size, td.col-date, td.col-class { color: var(--text-dim); font-variant-nu
   .banner.error { border-color: #f3c2c4; background: #fdeced; color: #b3282e; }
 }
 
+.context-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+}
+.context-menu {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+}
+.context-menu button {
+  justify-content: flex-start;
+  text-align: left;
+  border: none;
+  background: none;
+  padding: 5px 10px;
+  font-size: 12.5px;
+  border-radius: 4px;
+}
+.context-menu button:hover { background: var(--row-hover); }
+.context-menu button.danger { color: var(--danger); }
+
 .spinner {
   width: 15px; height: 15px;
   border: 2px solid var(--border-strong);
