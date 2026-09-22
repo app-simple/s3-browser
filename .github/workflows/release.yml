@@ -1,10 +1,18 @@
-name: Release
+name: Build & Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
   workflow_dispatch:
+
+# a newer push to the same branch makes the running build obsolete; tags keep
+# their own group so a release build is never cancelled by a follow-up commit
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 # build jobs only need to read the repo; the release token is granted to publish alone
 permissions:
@@ -43,6 +51,12 @@ jobs:
           if [ "$RUNNER_OS" != "macOS" ]; then
             unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
           fi
+          # Notarization costs several minutes per build and only matters for
+          # artifacts users actually install, so keep it for tagged releases.
+          # Signing still runs on every build, which is what usually breaks.
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            unset APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+          fi
           # Missing secrets arrive as empty strings; electron-builder treats an
           # empty CSC_LINK as a certificate to import, so unset empty vars to
           # fall back to an unsigned, un-notarized build.
@@ -54,6 +68,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: dist-${{ matrix.os }}
+          retention-days: ${{ github.ref_type == 'tag' && 30 || 7 }}
           path: |
             release/*.dmg
             release/*.zip
@@ -65,8 +80,10 @@ jobs:
 
   # Publishing happens in a single job after all builds succeed, so
   # parallel matrix jobs never race to create the same GitHub release.
+  # Ordinary pushes stop after build and leave their installers as artifacts.
   publish:
     needs: build
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: app-simple-prod-new
     permissions:
       contents: write
