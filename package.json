@@ -5,6 +5,10 @@
   "description": "Cross-platform S3 client for AWS S3, MinIO, Hetzner, Backblaze B2, Wasabi and other S3-compatible storage",
   "main": "./out/main/index.js",
   "license": "MIT",
+  "author": {
+    "name": "app-simple",
+    "email": "mw@app-simple.de"
+  },
   "private": true,
   "repository": {
     "type": "git",
@@ -34,7 +38,7 @@
     "@types/react-dom": "^19.2.5",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^44.0.0",
-    "electron-builder": "^26.15.3",
+    "electron-builder": "^26.16.1",
     "electron-vite": "^5.0.0",
     "typescript": "^7.0.2",
     "vite": "^7.3.6"
