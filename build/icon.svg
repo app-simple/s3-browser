@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">S3 Browser App Icon</title>
+  <desc id="desc">A modern blue app tile with a clean white storage bucket.</desc>
+
+  <defs>
+    <linearGradient id="tile" x1="170" y1="104" x2="844" y2="930" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#68B7FF"/>
+      <stop offset="0.46" stop-color="#3A86F6"/>
+      <stop offset="1" stop-color="#2458D9"/>
+    </linearGradient>
+
+    <radialGradient id="tileLight" cx="0" cy="0" r="1" gradientTransform="translate(287 184) rotate(48) scale(670 720)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity="0.24"/>
+      <stop offset="0.72" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="bucket" x1="512" y1="332" x2="512" y2="756" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#EAF3FF"/>
+    </linearGradient>
+
+    <linearGradient id="opening" x1="512" y1="322" x2="512" y2="401" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1D4DBF"/>
+      <stop offset="1" stop-color="#377DED"/>
+    </linearGradient>
+
+    <linearGradient id="dataBand" x1="336" y1="545" x2="676" y2="702" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#62AAFF"/>
+      <stop offset="1" stop-color="#2E6FE7"/>
+    </linearGradient>
+
+    <filter id="tileShadow" x="15" y="22" width="994" height="1016" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="22" stdDeviation="26" flood-color="#163A84" flood-opacity="0.22"/>
+    </filter>
+
+    <filter id="bucketShadow" x="250" y="288" width="524" height="524" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="20" stdDeviation="20" flood-color="#123B91" flood-opacity="0.24"/>
+    </filter>
+
+    <path id="bucketBody" d="M304 363L369 686C381 746 438 774 512 774C586 774 643 746 655 686L720 363H304Z"/>
+    <clipPath id="bucketClip">
+      <use href="#bucketBody"/>
+    </clipPath>
+  </defs>
+
+  <g filter="url(#tileShadow)">
+    <rect x="64" y="64" width="896" height="896" rx="224" fill="url(#tile)"/>
+    <rect x="65" y="65" width="894" height="894" rx="223" fill="url(#tileLight)"/>
+    <rect x="76" y="76" width="872" height="872" rx="212" fill="none" stroke="#FFFFFF" stroke-opacity="0.16" stroke-width="4"/>
+  </g>
+
+  <g filter="url(#bucketShadow)">
+    <use href="#bucketBody" fill="url(#bucket)"/>
+
+    <path d="M280 565C358 535 422 612 501 588C583 563 648 526 744 563V792H280V565Z" fill="url(#dataBand)" fill-opacity="0.18" clip-path="url(#bucketClip)"/>
+    <path d="M294 620C373 592 435 655 515 632C596 608 657 580 729 606" fill="none" stroke="#2E6FE7" stroke-opacity="0.10" stroke-width="22" clip-path="url(#bucketClip)"/>
+
+    <ellipse cx="512" cy="363" rx="208" ry="60" fill="#FFFFFF"/>
+    <ellipse cx="512" cy="363" rx="164" ry="39" fill="url(#opening)"/>
+    <ellipse cx="512" cy="352" rx="142" ry="24" fill="#7EC1FF" fill-opacity="0.18"/>
+
+    <path d="M371 686C383 746 439 774 512 774C585 774 641 746 653 686" fill="none" stroke="#FFFFFF" stroke-opacity="0.66" stroke-width="7" stroke-linecap="round"/>
+  </g>
+</svg>
