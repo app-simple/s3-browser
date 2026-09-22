@@ -400,7 +400,7 @@ export default function App() {
     if (!bucket) return
     const paths: string[] = []
     for (const file of Array.from(e.dataTransfer.files)) {
-      const p = (window as unknown as { api: unknown }) && (file as File & { path?: string }).path
+      const p = window.api.system.pathForFile(file)
       if (p) paths.push(p)
     }
     if (paths.length > 0) void uploadPaths(paths)

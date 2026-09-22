@@ -46,6 +46,19 @@ function write(data: StoreShape): void {
   renameSync(tmp, file)
 }
 
+/**
+ * safeStorage counts as "available" on Linux even when it fell back to the
+ * basic_text backend, which encrypts with a hard-coded key — treat that as
+ * unprotected so the UI can warn instead of claiming keychain protection.
+ */
+function secureStorageAvailable(): boolean {
+  if (!safeStorage.isEncryptionAvailable()) return false
+  if (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text') {
+    return false
+  }
+  return true
+}
+
 function encryptSecret(secret: string): { secret: string; encrypted: boolean } {
   if (safeStorage.isEncryptionAvailable()) {
     return { secret: safeStorage.encryptString(secret).toString('base64'), encrypted: true }
@@ -127,5 +140,5 @@ export function deleteAccount(id: string): void {
 }
 
 export function encryptionAvailable(): boolean {
-  return safeStorage.isEncryptionAvailable()
+  return secureStorageAvailable()
 }

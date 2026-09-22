@@ -320,6 +320,10 @@ td.col-size, td.col-date, td.col-class { color: var(--text-dim); font-variant-nu
 .checkbox { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-dim); }
 .checkbox input { width: auto; }
 .hint { font-size: 11.5px; color: var(--text-faint); margin-top: 5px; line-height: 1.5; }
+.hint.warn { color: #e8b86d; }
+@media (prefers-color-scheme: light) {
+  .hint.warn { color: #9a5b00; }
+}
 
 /* ---------- transfers ---------- */
 .transfers {

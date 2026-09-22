@@ -1,13 +1,36 @@
-import { ipcMain, dialog, shell, clipboard, BrowserWindow } from 'electron'
+import {
+  ipcMain,
+  dialog,
+  shell,
+  clipboard,
+  BrowserWindow,
+  type IpcMainInvokeEvent
+} from 'electron'
+import { isAbsolute } from 'node:path'
 import * as store from './store'
 import * as s3 from './s3'
 import * as transfers from './transfers'
+import { isAppUrl } from './origin'
 import type { AccountInput, Result } from '@shared/types'
 
 type Handler<A extends unknown[], R> = (...args: A) => Promise<R> | R
 
+/**
+ * Only the main frame of one of our own windows may invoke handlers. Any iframe,
+ * webview or foreign page that ends up with an ipcRenderer is rejected outright.
+ */
+function isTrustedSender(event: IpcMainInvokeEvent): boolean {
+  if (!BrowserWindow.fromWebContents(event.sender)) return false
+  const frame = event.senderFrame
+  if (!frame || frame !== event.sender.mainFrame) return false
+  return isAppUrl(frame.url)
+}
+
 function wrap<A extends unknown[], R>(channel: string, fn: Handler<A, R>): void {
-  ipcMain.handle(channel, async (_event, ...args: unknown[]): Promise<Result<R>> => {
+  ipcMain.handle(channel, async (event, ...args: unknown[]): Promise<Result<R>> => {
+    if (!isTrustedSender(event)) {
+      return { ok: false, error: 'IPC call rejected: untrusted sender' }
+    }
     try {
       const data = await fn(...(args as A))
       return { ok: true, data }
@@ -17,6 +40,15 @@ function wrap<A extends unknown[], R>(channel: string, fn: Handler<A, R>): void 
     }
   })
 }
+
+function assertAbsolutePath(value: unknown, what: string): asserts value is string {
+  if (typeof value !== 'string' || !value || value.includes('\0') || !isAbsolute(value)) {
+    throw new Error(`Invalid ${what}`)
+  }
+}
+
+/** S3 caps presigned URLs at 7 days; anything outside that range is a renderer bug. */
+const MAX_PRESIGN_SECONDS = 7 * 24 * 60 * 60
 
 export function registerIpc(): void {
   // ---- accounts -------------------------------------------------------
@@ -57,20 +89,28 @@ export function registerIpc(): void {
     entry: { key: string; type: 'file' | 'folder' },
     newName: string
   ) => s3.renameEntry(accountId, bucket, entry, newName))
-  wrap('s3:presign', (accountId: string, bucket: string, key: string, expiresIn: number) =>
-    s3.presignUrl(accountId, bucket, key, expiresIn)
-  )
+  wrap('s3:presign', (accountId: string, bucket: string, key: string, expiresIn: number) => {
+    if (!Number.isInteger(expiresIn) || expiresIn < 1 || expiresIn > MAX_PRESIGN_SECONDS) {
+      throw new Error('Link expiry must be between 1 second and 7 days')
+    }
+    return s3.presignUrl(accountId, bucket, key, expiresIn)
+  })
 
   // ---- transfers ------------------------------------------------------
-  wrap('transfer:upload', (accountId: string, bucket: string, prefix: string, paths: string[]) =>
-    transfers.uploadPaths(accountId, bucket, prefix, paths)
-  )
+  wrap('transfer:upload', (accountId: string, bucket: string, prefix: string, paths: unknown) => {
+    if (!Array.isArray(paths)) throw new Error('Invalid upload paths')
+    for (const p of paths) assertAbsolutePath(p, 'upload path')
+    return transfers.uploadPaths(accountId, bucket, prefix, paths as string[])
+  })
   wrap('transfer:download', (
     accountId: string,
     bucket: string,
     entries: { key: string; type: 'file' | 'folder' }[],
-    destDir: string
-  ) => transfers.downloadEntries(accountId, bucket, entries, destDir))
+    destDir: unknown
+  ) => {
+    assertAbsolutePath(destDir, 'download folder')
+    return transfers.downloadEntries(accountId, bucket, entries, destDir)
+  })
   wrap('transfer:planCopy', (
     sourceAccountId: string,
     sourceBucket: string,
@@ -162,8 +202,14 @@ export function registerIpc(): void {
     return res.response === 0
   })
 
-  wrap('shell:openPath', (path: string) => shell.openPath(path))
-  wrap('shell:showItem', (path: string) => shell.showItemInFolder(path))
-  wrap('shell:openExternal', (url: string) => shell.openExternal(url))
-  wrap('clipboard:write', (text: string) => clipboard.writeText(text))
+  // the renderer may only reveal files this app downloaded itself — never an arbitrary path
+  wrap('shell:showItem', (path: unknown) => {
+    assertAbsolutePath(path, 'path')
+    if (!transfers.isDownloadedPath(path)) throw new Error('Not a file downloaded by this app')
+    shell.showItemInFolder(path)
+  })
+  wrap('clipboard:write', (text: unknown) => {
+    if (typeof text !== 'string') throw new Error('Invalid clipboard text')
+    clipboard.writeText(text)
+  })
 }

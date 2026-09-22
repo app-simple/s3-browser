@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
   Account,
   AccountInput,
@@ -124,10 +124,10 @@ const api = {
       call<boolean>('dialog:confirm', message, detail, confirmLabel)
   },
   system: {
-    openPath: (path: string) => call<string>('shell:openPath', path),
     showItem: (path: string) => call<void>('shell:showItem', path),
-    openExternal: (url: string) => call<void>('shell:openExternal', url),
     copyToClipboard: (text: string) => call<void>('clipboard:write', text),
+    /** absolute path of a dropped File (File.path no longer exists in Electron ≥ 32) */
+    pathForFile: (file: File): string => webUtils.getPathForFile(file),
     platform: process.platform
   }
 }

@@ -21,8 +21,19 @@ export default function AccountDialog({ account, onClose, onSaved }: Props) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<string | null>(null)
+  // null while unknown; false means the secret would land in accounts.json unprotected
+  const [keychain, setKeychain] = useState<boolean | null>(null)
 
   const preset = useMemo(() => getProvider(provider), [provider])
+
+  useEffect(() => {
+    window.api.accounts
+      .encryptionAvailable()
+      .then(setKeychain)
+      .catch(() => setKeychain(false))
+  }, [])
+
+  const plainHttp = provider !== 'aws' && /^http:\/\//i.test(endpoint.trim())
 
   // when the provider changes (but not on initial edit render) apply its defaults
   useEffect(() => {
@@ -134,6 +145,12 @@ export default function AccountDialog({ account, onClose, onSaved }: Props) {
               </div>
             )}
           </div>
+          {plainHttp && (
+            <div className="hint warn">
+              Plain HTTP: object data and listings travel unencrypted. Only use this for a local
+              or trusted network.
+            </div>
+          )}
 
           <div className="field">
             <label>Access key ID</label>
@@ -155,10 +172,18 @@ export default function AccountDialog({ account, onClose, onSaved }: Props) {
               placeholder={isEdit ? 'unchanged — type to replace' : ''}
               onChange={(e) => setSecret(e.target.value)}
             />
-            <div className="hint">
-              Stored encrypted in your OS keychain (Keychain / DPAPI / libsecret) and never leaves
-              this machine.
-            </div>
+            {keychain === false ? (
+              <div className="hint warn">
+                No OS keychain protection is available on this system — the secret would be
+                saved in the app's config file without strong encryption. On Linux, unlock or
+                install a keyring (GNOME Keyring / KWallet) and restart the app.
+              </div>
+            ) : (
+              <div className="hint">
+                Stored encrypted in your OS keychain (Keychain / DPAPI / libsecret) and never
+                leaves this machine.
+              </div>
+            )}
           </div>
 
           <div className="field">
@@ -178,6 +203,12 @@ export default function AccountDialog({ account, onClose, onSaved }: Props) {
               />
               Allow self-signed TLS certificates
             </label>
+            {insecure && (
+              <div className="hint warn">
+                Disables all certificate checks for this connection, not just self-signed ones —
+                anyone on the network path could impersonate the server.
+              </div>
+            )}
           </div>
 
           {error && <div className="banner error" style={{ margin: '0 0 12px' }}>{error}</div>}

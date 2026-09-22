@@ -1,9 +1,24 @@
 import { Upload } from '@aws-sdk/lib-storage'
 import { CopyObjectCommand, GetObjectCommand, type S3Client } from '@aws-sdk/client-s3'
-import { createReadStream, createWriteStream, mkdirSync, readdirSync, statSync } from 'node:fs'
+import {
+  createReadStream,
+  createWriteStream,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  statSync
+} from 'node:fs'
 import { pipeline } from 'node:stream/promises'
 import { Readable, Transform } from 'node:stream'
-import { dirname, join, relative, sep, basename as pathBasename } from 'node:path'
+import {
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+  basename as pathBasename
+} from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { BrowserWindow } from 'electron'
 import type { Transfer, TransferKind } from '@shared/types'
@@ -72,11 +87,48 @@ export function clearFinishedTransfers(): void {
   }
 }
 
-/** Expand local paths (files and directories) into { absolute path, key suffix } pairs. */
+/** Whether a local path belongs to a download this app performed (used to gate "reveal"). */
+export function isDownloadedPath(path: string): boolean {
+  for (const t of transfers.values()) {
+    if (t.kind === 'download' && t.localPath === path) return true
+  }
+  return false
+}
+
+/**
+ * Map an object key (relative to the download root) onto a path inside destDir.
+ * Keys on shared buckets are attacker-controlled: ".."/"." segments, backslashes
+ * and drive prefixes must never let a download escape the folder the user picked.
+ */
+export function localPathFor(destDir: string, rel: string): string {
+  const segments = rel.split('/').filter((seg) => seg.length > 0)
+  if (segments.length === 0) throw new Error(`Cannot derive a file name from "${rel}"`)
+  for (const seg of segments) {
+    const dotOnly = seg === '.' || seg === '..'
+    const badChars = /[\\\0]/.test(seg) || (process.platform === 'win32' && seg.includes(':'))
+    if (dotOnly || badChars) {
+      throw new Error(`Refusing to write "${rel}": unsafe path segment "${seg}"`)
+    }
+  }
+  const root = resolve(destDir)
+  const target = resolve(root, ...segments)
+  const inside = relative(root, target)
+  if (!inside || inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) {
+    throw new Error(`Refusing to write "${rel}" outside of ${root}`)
+  }
+  return target
+}
+
+/**
+ * Expand local paths (files and directories) into { absolute path, key suffix } pairs.
+ * Symlinks inside a folder are skipped: following them could upload files from
+ * outside the selected tree (e.g. a link to ~/.ssh) or loop forever on cycles.
+ */
 function expandLocal(paths: string[]): { file: string; rel: string }[] {
   const out: { file: string; rel: string }[] = []
   const walk = (abs: string, root: string): void => {
-    const st = statSync(abs)
+    const st = lstatSync(abs)
+    if (st.isSymbolicLink()) return
     if (st.isDirectory()) {
       for (const child of readdirSync(abs)) walk(join(abs, child), root)
     } else if (st.isFile()) {
@@ -147,20 +199,26 @@ export async function downloadEntries(
 ): Promise<number> {
   const client = getClient(accountId)
 
-  // flatten folders into individual keys, keeping a sensible local layout
-  const jobs: { key: string; localPath: string; size: number }[] = []
+  // flatten folders into individual keys, keeping a sensible local layout;
+  // keys that would land outside destDir become failed transfers instead of writes
+  const jobs: { key: string; localPath: string; size: number; unsafe?: string }[] = []
+  const plan = (key: string, rel: string, size: number): void => {
+    try {
+      jobs.push({ key, localPath: localPathFor(destDir, rel), size })
+    } catch (err) {
+      jobs.push({ key, localPath: '', size, unsafe: err instanceof Error ? err.message : String(err) })
+    }
+  }
   for (const e of entries) {
     if (e.type === 'folder') {
       const parentLen = e.key.replace(/\/$/, '').lastIndexOf('/') + 1
       const all = await listAllKeys(accountId, bucket, e.key)
       for (const obj of all) {
         if (obj.key.endsWith('/')) continue
-        const rel = obj.key.slice(parentLen)
-        jobs.push({ key: obj.key, localPath: join(destDir, ...rel.split('/')), size: obj.size })
+        plan(obj.key, obj.key.slice(parentLen), obj.size)
       }
     } else {
-      const name = e.key.slice(e.key.lastIndexOf('/') + 1)
-      jobs.push({ key: e.key, localPath: join(destDir, name), size: 0 })
+      plan(e.key, e.key.slice(e.key.lastIndexOf('/') + 1), 0)
     }
   }
 
@@ -174,6 +232,10 @@ export async function downloadEntries(
       job.localPath,
       job.size
     )
+    if (job.unsafe) {
+      update(t.id, { status: 'error', error: job.unsafe, finishedAt: Date.now() })
+      continue
+    }
     const controller = new AbortController()
     aborters.set(t.id, controller)
 
