@@ -2,6 +2,7 @@ import { basename } from 'node:path'
 import type { S3Client } from '@aws-sdk/client-s3'
 import type { ConflictMode, S3Location } from '@shared/types'
 import { countPrefix } from './prefixScan'
+import { existingLocal, existingTargets, s3Probe, targetChecks } from './conflicts'
 import type { JobFactory, JobRuntime, PlannedJob } from './queueService'
 import { listingSource, type SyncEntry } from './syncSource'
 import {
@@ -22,6 +23,8 @@ import { JobFailure, type QueueItem } from './transferQueue'
 interface UploadSpec {
   accountId: string
   bucket: string
+  /** target folder; jobs saved before it existed read as the bucket root */
+  prefix?: string
 }
 
 interface DownloadSpec {
@@ -134,35 +137,42 @@ export function createJobFactory(deps: FactoryDeps): JobFactory {
       switch (req.kind) {
         case 'upload': {
           const items = buildUploadItems(req.prefix, req.paths)
-          const spec: UploadSpec = { accountId: req.accountId, bucket: req.bucket }
+          const existing = await existingTargets(
+            targetChecks(req.prefix, items.map((i) => i.data.key)),
+            s3Probe(client(req.accountId), req.bucket)
+          )
+          const clashing = items.filter((i) => existing.has(i.data.key))
+          const spec: UploadSpec = { accountId: req.accountId, bucket: req.bucket, prefix: req.prefix }
           return {
             kind: 'upload',
             title: `Upload ${count(items.length, 'file')} → ${at(req.bucket, req.prefix)}`,
             target: { type: 's3', accountId: req.accountId, bucket: req.bucket, prefix: req.prefix },
             items,
-            conflicts: [],
-            sample: [],
+            conflicts: clashing.map((i) => i.index),
+            sample: clashing.slice(0, 5).map((i) => i.data.key),
             spec
           }
         }
         case 'download': {
           const items = await buildDownloadItems(lister(req.accountId, req.bucket), req.entries)
+          const existing = existingLocal(req.destDir, items.map((i) => i.data.rel))
+          const clashing = items.filter((i) => existing.has(i.data.rel))
           const spec: DownloadSpec = { accountId: req.accountId, bucket: req.bucket, destDir: req.destDir }
           return {
             kind: 'download',
             title: `Download ${count(items.length, 'file')} → ${basename(req.destDir)}`,
             target: { type: 'local', dir: req.destDir },
             items,
-            conflicts: [],
-            sample: [],
+            conflicts: clashing.map((i) => i.index),
+            sample: clashing.slice(0, 5).map((i) => i.data.rel),
             spec
           }
         }
         case 'copy': {
           const items = await buildCopyItems(lister(req.accountId, req.bucket), req.entries, req.target.prefix)
-          // today's check, narrowed to what a selection touches in Task 9
-          const existing = new Set(
-            (await deps.listKeys(req.target.accountId, req.target.bucket, req.target.prefix)).map((o) => o.key)
+          const existing = await existingTargets(
+            targetChecks(req.target.prefix, items.map((i) => i.data.targetKey)),
+            s3Probe(client(req.target.accountId), req.target.bucket)
           )
           const clashing = items.filter((i) => existing.has(i.data.targetKey))
           const spec: CopySpec = { accountId: req.accountId, bucket: req.bucket, target: req.target }
@@ -220,6 +230,38 @@ export function createJobFactory(deps: FactoryDeps): JobFactory {
         }
         case 'sync':
           return syncRuntime(job.spec as SyncSpec, job.conflict, job.startAfter, wake)
+      }
+    },
+
+    async recheck(kind, spec, items): Promise<number[]> {
+      switch (kind) {
+        case 'upload': {
+          const s = spec as UploadSpec
+          const typed = items as QueueItem<UploadData>[]
+          const existing = await existingTargets(
+            targetChecks(s.prefix ?? '', typed.map((i) => i.data.key)),
+            s3Probe(client(s.accountId), s.bucket)
+          )
+          return typed.filter((i) => existing.has(i.data.key)).map((i) => i.index)
+        }
+        case 'download': {
+          const s = spec as DownloadSpec
+          const typed = items as QueueItem<DownloadData>[]
+          const existing = existingLocal(s.destDir, typed.map((i) => i.data.rel))
+          return typed.filter((i) => existing.has(i.data.rel)).map((i) => i.index)
+        }
+        case 'copy': {
+          const s = spec as CopySpec
+          const typed = items as QueueItem<CopyData>[]
+          const existing = await existingTargets(
+            targetChecks(s.target.prefix, typed.map((i) => i.data.targetKey)),
+            s3Probe(client(s.target.accountId), s.target.bucket)
+          )
+          return typed.filter((i) => existing.has(i.data.targetKey)).map((i) => i.index)
+        }
+        case 'sync':
+          // a sync decides per object while it runs
+          return []
       }
     }
   }

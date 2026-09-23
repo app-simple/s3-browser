@@ -73,7 +73,14 @@ connection, so anything speaking the S3 API works.
 - Copy and move between buckets — and between accounts, streaming directly from one
   provider to the other without touching the disk
 - Bucket sync with resumable re-runs that skip objects already present at the destination
-- Live progress per item, cancel while running, clear finished
+- A transfer queue: every upload, download and copy is one job listing its waiting
+  files; at most four files move at once, and jobs take turns so a small one never
+  waits behind a large one
+- Pause everything or a single job — running files finish, nothing new starts — and
+  cancel a job or a single running file
+- Unfinished jobs survive quitting the app and are offered again on the next start
+- Uploads, downloads and copies ask once per job when targets already exist:
+  skip them or overwrite them
 
 **Managing**
 - Create folders, rename, recursive delete, create and delete buckets
@@ -118,7 +125,14 @@ src/
 │   ├── ipc.ts          typed IPC handlers (every call returns { ok, data | error })
 │   ├── store.ts        account persistence + safeStorage encryption
 │   ├── s3.ts           S3 client factory and all bucket/object operations
-│   └── transfers.ts    upload/download/copy queue with progress events
+│   ├── transferQueue.ts  scheduler: four slots, fair turns, pause and cancel
+│   ├── transferItems.ts  what a job is made of, and how one file moves
+│   ├── syncSource.ts     a bucket sync, listed page by page with a resume mark
+│   ├── queueService.ts   plans, jobs, persistence and restore, wired together
+│   ├── queueStore.ts     job files and append-only logs under userData/queue
+│   ├── conflicts.ts      which targets already exist, checked narrowly
+│   ├── jobFactory.ts     turns a request into a runnable job
+│   └── prefixScan.ts     background count of a folder's objects and bytes
 ├── preload/        contextBridge API exposed as window.api
 ├── shared/         types, provider presets, formatting helpers
 └── renderer/       React UI
@@ -146,6 +160,9 @@ blast radius small:
 - **Confined downloads.** Object keys on a shared bucket are attacker-controlled, so keys
   are never used as file paths directly: anything resolving outside the folder you picked
   is refused instead of written.
+- **Transfer queue on disk.** Unfinished jobs are kept under `userData/queue/`, readable
+  only by you, with connection ids but never credentials. Download paths are derived
+  again through the same confinement on every run instead of trusting a saved path.
 - **Uploads stay inside the selection.** Recursive uploads skip symlinks, so a link inside
   a folder cannot pull in files from elsewhere on your disk.
 - **Credentials at rest.** Secret keys live in `accounts.json` in Electron's `userData`
