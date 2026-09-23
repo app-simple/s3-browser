@@ -121,3 +121,15 @@ export const ChevronIcon = ({ size = 13, className }: Props) => (
     <path d="M6 3.5 10.5 8 6 12.5" />
   </svg>
 )
+
+export const PauseIcon = ({ size = 13, className }: Props) => (
+  <svg {...base(size)} className={`icon ${className ?? ''}`}>
+    <path d="M5.5 3.5v9M10.5 3.5v9" />
+  </svg>
+)
+
+export const PlayIcon = ({ size = 13, className }: Props) => (
+  <svg {...base(size)} className={`icon ${className ?? ''}`}>
+    <path d="M5 3.5l7 4.5-7 4.5Z" />
+  </svg>
+)

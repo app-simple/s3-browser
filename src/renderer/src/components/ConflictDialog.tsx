@@ -2,7 +2,7 @@ interface Props {
   conflicts: number
   total: number
   sample: string[]
-  targetBucket: string
+  targetLabel: string
   onOverwrite: () => void
   onSkip: () => void
   onCancel: () => void
@@ -12,7 +12,7 @@ export default function ConflictDialog({
   conflicts,
   total,
   sample,
-  targetBucket,
+  targetLabel,
   onOverwrite,
   onSkip,
   onCancel
@@ -24,7 +24,7 @@ export default function ConflictDialog({
         <div className="modal-body">
           <p style={{ margin: '0 0 10px' }}>
             {conflicts} of {total} object{total === 1 ? '' : 's'} already exist
-            {conflicts === 1 ? 's' : ''} in “{targetBucket}”:
+            {conflicts === 1 ? 's' : ''} in “{targetLabel}”:
           </p>
           <ul
             style={{
@@ -44,9 +44,9 @@ export default function ConflictDialog({
             {conflicts > sample.length && <li>… and {conflicts - sample.length} more</li>}
           </ul>
           <div className="hint">
-            “Skip existing” copies only the {total - conflicts} object
+            “Skip existing” transfers only the {total - conflicts} object
             {total - conflicts === 1 ? '' : 's'} that {total - conflicts === 1 ? 'is' : 'are'} not
-            at the destination yet. “Overwrite” replaces the existing objects.
+            at the destination yet. “Overwrite” replaces the existing ones.
           </div>
         </div>
         <div className="modal-foot">

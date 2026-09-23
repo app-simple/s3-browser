@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import {
   ipcMain,
   dialog,
@@ -6,13 +7,14 @@ import {
   BrowserWindow,
   type IpcMainInvokeEvent
 } from 'electron'
-import { isAbsolute } from 'node:path'
 import * as store from './store'
 import * as s3 from './s3'
-import * as transfers from './transfers'
 import { createPrefixScanner } from './prefixScan'
+import { createJobFactory } from './jobFactory'
+import { parseJobRequest } from './jobRequest'
+import { createQueueService } from './queueService'
 import { isAppUrl } from './origin'
-import type { AccountInput, Result } from '@shared/types'
+import type { AccountInput, ConflictMode, Result } from '@shared/types'
 
 type Handler<A extends unknown[], R> = (...args: A) => Promise<R> | R
 
@@ -42,10 +44,21 @@ function wrap<A extends unknown[], R>(channel: string, fn: Handler<A, R>): void 
   })
 }
 
-function assertAbsolutePath(value: unknown, what: string): asserts value is string {
-  if (typeof value !== 'string' || !value || value.includes('\0') || !isAbsolute(value)) {
-    throw new Error(`Invalid ${what}`)
+function broadcast(channel: string, payload: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send(channel, payload)
   }
+}
+
+/** Job and plan ids are UUIDs; they also name files under userData/queue. */
+function jobId(value: unknown): string {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(value)) throw new Error('Invalid job id')
+  return value
+}
+
+function conflictMode(value: unknown): ConflictMode {
+  if (value !== 'skip' && value !== 'overwrite') throw new Error('Invalid conflict choice')
+  return value
 }
 
 /** S3 caps presigned URLs at 7 days; anything outside that range is a renderer bug. */
@@ -54,11 +67,18 @@ const MAX_PRESIGN_SECONDS = 7 * 24 * 60 * 60
 export function registerIpc(): void {
   const scanner = createPrefixScanner({
     getClient: (accountId) => s3.getClient(accountId),
-    emit: (stats) => {
-      for (const win of BrowserWindow.getAllWindows()) {
-        if (!win.isDestroyed()) win.webContents.send('prefix:stats', stats)
-      }
-    }
+    emit: (stats) => broadcast('prefix:stats', stats)
+  })
+  const queue = createQueueService({
+    factory: createJobFactory({
+      getClient: (accountId) => s3.getClient(accountId),
+      accountExists: (accountId) => store.getAccount(accountId) !== undefined,
+      listKeys: (accountId, bucket, prefix) => s3.listAllKeys(accountId, bucket, prefix)
+    }),
+    emit: (snapshot) => broadcast('queue:update', snapshot),
+    onJobDone: (event) => broadcast('queue:jobDone', event),
+    newId: () => randomUUID(),
+    now: () => Date.now()
   })
 
   // ---- accounts -------------------------------------------------------
@@ -114,76 +134,29 @@ export function registerIpc(): void {
     return s3.presignUrl(accountId, bucket, key, expiresIn)
   })
 
-  // ---- transfers ------------------------------------------------------
-  wrap('transfer:upload', (accountId: string, bucket: string, prefix: string, paths: unknown) => {
-    if (!Array.isArray(paths)) throw new Error('Invalid upload paths')
-    for (const p of paths) assertAbsolutePath(p, 'upload path')
-    return transfers.uploadPaths(accountId, bucket, prefix, paths as string[])
+  // ---- transfer queue -------------------------------------------------
+  wrap('queue:plan', (req: unknown) => queue.plan(parseJobRequest(req)))
+  wrap('queue:enqueue', (planId: unknown, mode: unknown) =>
+    queue.enqueue(jobId(planId), conflictMode(mode))
+  )
+  wrap('queue:list', () => queue.snapshot())
+  wrap('queue:pauseAll', () => queue.pauseAll())
+  wrap('queue:resumeAll', () => queue.resumeAll())
+  wrap('queue:pauseJob', (id: unknown) => queue.pauseJob(jobId(id)))
+  wrap('queue:resumeJob', (id: unknown) => queue.resumeJob(jobId(id)))
+  wrap('queue:cancelJob', (id: unknown) => queue.cancelJob(jobId(id)))
+  wrap('queue:cancelItem', (id: unknown, index: unknown) => {
+    if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) throw new Error('Invalid item')
+    queue.cancelItem(jobId(id), index)
   })
-  wrap('transfer:download', (
-    accountId: string,
-    bucket: string,
-    entries: { key: string; type: 'file' | 'folder' }[],
-    destDir: unknown
-  ) => {
-    assertAbsolutePath(destDir, 'download folder')
-    return transfers.downloadEntries(accountId, bucket, entries, destDir)
+  wrap('queue:clearFinished', () => queue.clearFinished())
+  // the folder comes from the job itself, never from the renderer
+  wrap('queue:revealJob', async (id: unknown) => {
+    const dir = queue.revealDir(jobId(id))
+    if (!dir) throw new Error('This job has no local folder')
+    const failure = await shell.openPath(dir)
+    if (failure) throw new Error(failure)
   })
-  wrap('transfer:planCopy', (
-    sourceAccountId: string,
-    sourceBucket: string,
-    entries: { key: string; type: 'file' | 'folder'; size?: number }[],
-    targetAccountId: string,
-    targetBucket: string,
-    targetPrefix: string
-  ) =>
-    transfers.planCopy(
-      sourceAccountId,
-      sourceBucket,
-      entries,
-      targetAccountId,
-      targetBucket,
-      targetPrefix
-    ))
-  wrap('transfer:copy', (
-    sourceAccountId: string,
-    sourceBucket: string,
-    entries: { key: string; type: 'file' | 'folder'; size?: number }[],
-    targetAccountId: string,
-    targetBucket: string,
-    targetPrefix: string,
-    skipExisting?: boolean
-  ) =>
-    transfers.copyEntries(
-      sourceAccountId,
-      sourceBucket,
-      entries,
-      targetAccountId,
-      targetBucket,
-      targetPrefix,
-      skipExisting
-    ))
-  wrap('transfer:syncBucket', (
-    sourceAccountId: string,
-    sourceBucket: string,
-    sourcePrefix: string,
-    targetAccountId: string,
-    targetBucket: string,
-    targetPrefix: string,
-    skipExisting: boolean
-  ) =>
-    transfers.syncBucket(
-      sourceAccountId,
-      sourceBucket,
-      sourcePrefix,
-      targetAccountId,
-      targetBucket,
-      targetPrefix,
-      skipExisting
-    ))
-  wrap('transfer:list', () => transfers.listTransfers())
-  wrap('transfer:cancel', (id: string) => transfers.cancelTransfer(id))
-  wrap('transfer:clear', () => transfers.clearFinishedTransfers())
 
   // ---- shell / dialogs ------------------------------------------------
   wrap('dialog:pickFiles', async () => {
@@ -220,12 +193,6 @@ export function registerIpc(): void {
     return res.response === 0
   })
 
-  // the renderer may only reveal files this app downloaded itself — never an arbitrary path
-  wrap('shell:showItem', (path: unknown) => {
-    assertAbsolutePath(path, 'path')
-    if (!transfers.isDownloadedPath(path)) throw new Error('Not a file downloaded by this app')
-    shell.showItemInFolder(path)
-  })
   wrap('clipboard:write', (text: unknown) => {
     if (typeof text !== 'string') throw new Error('Invalid clipboard text')
     clipboard.writeText(text)

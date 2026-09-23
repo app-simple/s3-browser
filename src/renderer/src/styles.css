@@ -367,6 +367,30 @@ td.col-size, td.col-date, td.col-class { color: var(--text-dim); font-variant-nu
 .progress.cancelled > div { background: var(--text-faint); }
 .tstatus { color: var(--text-faint); text-align: right; font-variant-numeric: tabular-nums; }
 .tstatus.error { color: var(--danger); }
+.job-row { grid-template-columns: 16px 1fr 130px 74px 64px; }
+.job-toggle {
+  display: flex;
+  align-items: center;
+  color: var(--text-faint);
+  transition: transform .12s;
+}
+.job-actions { display: flex; justify-content: flex-end; gap: 2px; }
+.job-actions button { padding: 2px; }
+/* file rows indent through their first column, so the bars line up with the job's */
+.item-row { grid-template-columns: 42px 1fr 130px 74px 64px; padding: 3px 0; }
+.item-row > button { justify-self: end; }
+.transfer-row .tsub.error { color: var(--danger); }
+.transfer-row .tname svg { vertical-align: -2px; }
+.job-upcoming {
+  font-size: 11px;
+  color: var(--text-faint);
+  /* first column plus gap, so it lines up with the file names above */
+  padding: 3px 0 5px 52px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.job-upcoming .more { color: var(--text-dim); }
 
 .badge {
   font-size: 11px;

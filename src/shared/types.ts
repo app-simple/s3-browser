@@ -78,33 +78,7 @@ export interface ObjectDetails {
   metadata: Record<string, string>
 }
 
-export type TransferKind = 'upload' | 'download' | 'copy'
-export type TransferStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled'
 
-export interface Transfer {
-  id: string
-  kind: TransferKind
-  name: string
-  accountId: string
-  bucket: string
-  key: string
-  localPath: string
-  loaded: number
-  total: number
-  status: TransferStatus
-  error?: string
-  startedAt: number
-  finishedAt?: number
-  /** destination of an s3-to-s3 copy */
-  targetAccountId?: string
-  targetBucket?: string
-  targetKey?: string
-  /** aggregate transfers (bucket sync): object currently being transferred */
-  detail?: string
-  itemsDone?: number
-  itemsTotal?: number
-  itemsSkipped?: number
-}
 
 export interface Result<T> {
   ok: boolean

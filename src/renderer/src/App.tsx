@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Account, BucketInfo, PrefixStats, S3Entry, Transfer } from '@shared/types'
+import type {
+  Account,
+  BucketInfo,
+  ConflictMode,
+  JobRequest,
+  PlanSummary,
+  PrefixStats,
+  QueueSnapshot,
+  S3Entry
+} from '@shared/types'
 import { formatBytes } from '@shared/format'
 import Sidebar from './components/Sidebar'
 import AccountDialog from './components/AccountDialog'
@@ -47,22 +56,14 @@ export default function App() {
   const [filter, setFilter] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
-  const [transfers, setTransfers] = useState<Transfer[]>([])
+  const [queue, setQueue] = useState<QueueSnapshot>({ paused: false, jobs: [], restore: null })
   const [editing, setEditing] = useState<Account | null>(null)
   const [showAccountDialog, setShowAccountDialog] = useState(false)
   const [prompt, setPrompt] = useState<PromptKind>(null)
   const [detailsEntry, setDetailsEntry] = useState<S3Entry | null>(null)
   const [showCopyDialog, setShowCopyDialog] = useState(false)
   const [copyBucket, setCopyBucket] = useState<{ accountId: string; bucket: string } | null>(null)
-  const [conflictPrompt, setConflictPrompt] = useState<{
-    entries: { key: string; type: 'file' | 'folder'; size: number }[]
-    targetAccountId: string
-    targetBucket: string
-    targetPrefix: string
-    total: number
-    conflicts: number
-    sample: string[]
-  } | null>(null)
+  const [conflictPrompt, setConflictPrompt] = useState<(PlanSummary & { targetLabel: string }) | null>(null)
   const [dragging, setDragging] = useState(false)
 
   const dragCounter = useRef(0)
@@ -73,16 +74,8 @@ export default function App() {
   // ---------- bootstrap ----------
   useEffect(() => {
     window.api.accounts.list().then(setAccounts).catch(() => undefined)
-    window.api.transfers.list().then(setTransfers).catch(() => undefined)
-    return window.api.transfers.onUpdate((t) => {
-      setTransfers((prev) => {
-        const idx = prev.findIndex((p) => p.id === t.id)
-        if (idx === -1) return [t, ...prev]
-        const next = [...prev]
-        next[idx] = t
-        return next
-      })
-    })
+    window.api.queue.list().then(setQueue).catch(() => undefined)
+    return window.api.queue.onUpdate(setQueue)
   }, [])
 
   // events from a folder the user has already left are dropped here
@@ -177,6 +170,22 @@ export default function App() {
     else if (accountId) void loadBuckets(accountId)
   }, [accountId, bucket, prefix, loadObjects, loadBuckets])
 
+  // a job that wrote into the open bucket shows up without a manual refresh
+  const refreshRef = useRef(refresh)
+  refreshRef.current = refresh
+  const openBucket = useRef({ accountId, bucket })
+  openBucket.current = { accountId, bucket }
+  useEffect(
+    () =>
+      window.api.queue.onJobDone(({ target }) => {
+        const open = openBucket.current
+        if (target.type === 's3' && target.accountId === open.accountId && target.bucket === open.bucket) {
+          refreshRef.current()
+        }
+      }),
+    []
+  )
+
   // ---------- selection ----------
   const selectedEntries = useMemo(
     () => entries.filter((e) => selected.has(e.key)),
@@ -200,14 +209,34 @@ export default function App() {
   }
 
   // ---------- actions ----------
-  async function uploadPaths(paths: string[]): Promise<void> {
-    if (!accountId || !bucket || paths.length === 0) return
+  /** Plan a transfer, ask once about targets that already exist, then hand it to the queue. */
+  async function startJob(req: JobRequest, targetLabel: string): Promise<void> {
     try {
-      await window.api.transfers.upload(accountId, bucket, prefix, paths)
+      const plan = await window.api.queue.plan(req)
+      if (plan.conflicts > 0) {
+        setConflictPrompt({ ...plan, targetLabel })
+        return
+      }
+      await window.api.queue.enqueue(plan.planId, 'overwrite')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
-    refresh()
+  }
+
+  async function resolveConflict(mode: ConflictMode): Promise<void> {
+    const prompt = conflictPrompt
+    setConflictPrompt(null)
+    if (!prompt) return
+    try {
+      await window.api.queue.enqueue(prompt.planId, mode)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  async function uploadPaths(paths: string[]): Promise<void> {
+    if (!accountId || !bucket || paths.length === 0) return
+    await startJob({ kind: 'upload', accountId, bucket, prefix, paths }, `${bucket}/${prefix}`)
   }
 
   async function handleUploadFiles(): Promise<void> {
@@ -222,73 +251,31 @@ export default function App() {
     if (!accountId || !bucket || selectedEntries.length === 0) return
     const dest = await window.api.dialog.pickDestination()
     if (!dest) return
-    try {
-      await window.api.transfers.download(
+    await startJob(
+      {
+        kind: 'download',
         accountId,
         bucket,
-        selectedEntries.map((e) => ({ key: e.key, type: e.type })),
-        dest
-      )
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    }
+        entries: selectedEntries.map((e) => ({ key: e.key, type: e.type, size: e.size })),
+        destDir: dest
+      },
+      dest
+    )
   }
 
-  async function startCopy(
-    entries: { key: string; type: 'file' | 'folder'; size: number }[],
-    targetAccountId: string,
-    targetBucket: string,
-    targetPrefix: string,
-    skipExisting: boolean
-  ): Promise<void> {
-    if (!accountId || !bucket) return
-    try {
-      await window.api.transfers.copy(
-        accountId,
-        bucket,
-        entries,
-        targetAccountId,
-        targetBucket,
-        targetPrefix,
-        skipExisting
-      )
-      if (targetAccountId === accountId && targetBucket === bucket) refresh()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    }
-  }
-
-  async function handleCopy(
-    targetAccountId: string,
-    targetBucket: string,
-    targetPrefix: string
-  ): Promise<void> {
+  async function handleCopy(targetAccountId: string, targetBucket: string, targetPrefix: string): Promise<void> {
     if (!accountId || !bucket || selectedEntries.length === 0) return
     setShowCopyDialog(false)
-    const entries = selectedEntries.map((e) => ({ key: e.key, type: e.type, size: e.size }))
-    try {
-      const plan = await window.api.transfers.planCopy(
+    await startJob(
+      {
+        kind: 'copy',
         accountId,
         bucket,
-        entries,
-        targetAccountId,
-        targetBucket,
-        targetPrefix
-      )
-      if (plan.conflicts > 0) {
-        setConflictPrompt({
-          entries,
-          targetAccountId,
-          targetBucket,
-          targetPrefix,
-          ...plan
-        })
-        return
-      }
-      await startCopy(entries, targetAccountId, targetBucket, targetPrefix, false)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    }
+        entries: selectedEntries.map((e) => ({ key: e.key, type: e.type, size: e.size })),
+        target: { accountId: targetAccountId, bucket: targetBucket, prefix: targetPrefix }
+      },
+      `${targetBucket}/${targetPrefix}`
+    )
   }
 
   async function handleSyncBucket(
@@ -301,16 +288,15 @@ export default function App() {
     const src = copyBucket
     setCopyBucket(null)
     try {
-      await window.api.transfers.syncBucket(
-        src.accountId,
-        src.bucket,
-        '',
-        targetAccountId,
-        targetBucket,
-        targetPrefix,
-        skipExisting
-      )
-      if (targetAccountId === accountId && targetBucket === bucket) refresh()
+      const plan = await window.api.queue.plan({
+        kind: 'sync',
+        accountId: src.accountId,
+        bucket: src.bucket,
+        prefix: '',
+        target: { accountId: targetAccountId, bucket: targetBucket, prefix: targetPrefix }
+      })
+      // a sync decides per object while it runs; the checkbox is its conflict choice
+      await window.api.queue.enqueue(plan.planId, skipExisting ? 'skip' : 'overwrite')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -651,13 +637,15 @@ export default function App() {
         </div>
 
         <TransferPanel
-          transfers={transfers}
-          onCancel={(id) => void window.api.transfers.cancel(id)}
-          onClear={() => {
-            void window.api.transfers.clearFinished()
-            setTransfers((t) => t.filter((x) => x.status === 'running' || x.status === 'queued'))
-          }}
-          onReveal={(p) => void window.api.system.showItem(p)}
+          queue={queue}
+          onPauseAll={() => void window.api.queue.pauseAll()}
+          onResumeAll={() => void window.api.queue.resumeAll()}
+          onPauseJob={(id) => void window.api.queue.pauseJob(id)}
+          onResumeJob={(id) => void window.api.queue.resumeJob(id)}
+          onCancelJob={(id) => void window.api.queue.cancelJob(id)}
+          onCancelItem={(id, index) => void window.api.queue.cancelItem(id, index)}
+          onClear={() => void window.api.queue.clearFinished()}
+          onReveal={(id) => void window.api.queue.revealJob(id)}
         />
 
         <div className="statusbar">
@@ -765,20 +753,12 @@ export default function App() {
       {conflictPrompt && (
         <ConflictDialog
           conflicts={conflictPrompt.conflicts}
-          total={conflictPrompt.total}
+          total={conflictPrompt.total ?? conflictPrompt.conflicts}
           sample={conflictPrompt.sample}
-          targetBucket={conflictPrompt.targetBucket}
+          targetLabel={conflictPrompt.targetLabel}
           onCancel={() => setConflictPrompt(null)}
-          onOverwrite={() => {
-            const p = conflictPrompt
-            setConflictPrompt(null)
-            void startCopy(p.entries, p.targetAccountId, p.targetBucket, p.targetPrefix, false)
-          }}
-          onSkip={() => {
-            const p = conflictPrompt
-            setConflictPrompt(null)
-            void startCopy(p.entries, p.targetAccountId, p.targetBucket, p.targetPrefix, true)
-          }}
+          onOverwrite={() => void resolveConflict('overwrite')}
+          onSkip={() => void resolveConflict('skip')}
         />
       )}
 

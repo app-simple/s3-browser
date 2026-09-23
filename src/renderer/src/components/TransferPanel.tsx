@@ -1,74 +1,239 @@
 import { useRef, useState } from 'react'
-import type { Transfer } from '@shared/types'
+import type { QueueSnapshot, TransferItemView, TransferJobView } from '@shared/types'
 import { formatBytes } from '@shared/format'
-import { ChevronIcon, CopyIcon, DownloadIcon, UploadIcon, XIcon } from './Icons'
+import {
+  ChevronIcon,
+  CopyIcon,
+  DownloadIcon,
+  FolderIcon,
+  PauseIcon,
+  PlayIcon,
+  UploadIcon,
+  XIcon
+} from './Icons'
 
 interface Props {
-  transfers: Transfer[]
-  onCancel: (id: string) => void
-  onClear: () => void
-  onReveal: (path: string) => void
+  queue: QueueSnapshot
+  onPauseAll(): void
+  onResumeAll(): void
+  onPauseJob(id: string): void
+  onResumeJob(id: string): void
+  onCancelJob(id: string): void
+  onCancelItem(id: string, index: number): void
+  onClear(): void
+  onReveal(id: string): void
 }
 
 interface SpeedSample {
-  loaded: number
+  done: number
   time: number
   speed: number
 }
 
-export default function TransferPanel({ transfers, onCancel, onClear, onReveal }: Props) {
+const KIND_ICON = { upload: UploadIcon, download: DownloadIcon, copy: CopyIcon, sync: CopyIcon }
+
+function percent(job: TransferJobView): number {
+  if (job.bytes.total) return Math.min(100, (job.bytes.done / job.bytes.total) * 100)
+  const { items } = job
+  const settled = items.done + items.skipped + items.failed + items.cancelled
+  return items.total ? Math.min(100, (settled / items.total) * 100) : 0
+}
+
+/** One line under the title: how far the job is and what it is doing right now. */
+function summary(job: TransferJobView, speed: number): string {
+  if (job.error) return `Failed — ${job.error}`
+  const { items } = job
+  const settled = (items.done + items.skipped).toLocaleString()
+  const parts = [items.total === null ? `${settled} objects` : `${settled} / ${items.total.toLocaleString()}`]
+  if (items.skipped) parts.push(`${items.skipped.toLocaleString()} skipped`)
+  if (items.failed) parts.push(`${items.failed.toLocaleString()} failed`)
+  if (items.cancelled) parts.push(`${items.cancelled.toLocaleString()} cancelled`)
+  if (!job.finished) {
+    if (job.paused) parts.push(items.running ? `paused — ${items.running} finishing` : 'paused')
+    else if (speed > 0) parts.push(`${formatBytes(speed)}/s`)
+  }
+  return parts.join(' · ')
+}
+
+function jobStatus(job: TransferJobView): string {
+  if (job.error || (job.finished && job.items.failed)) return 'error'
+  if (job.finished) return job.items.done || job.items.skipped ? 'done' : 'cancelled'
+  return 'running'
+}
+
+function ItemRow({ item, onCancel }: { item: TransferItemView; onCancel?: () => void }) {
+  const pct = item.size > 0 ? Math.min(100, (item.loaded / item.size) * 100) : 0
+  const failed = item.status === 'error'
+  return (
+    <div className="transfer-row item-row">
+      <span />
+      <div className="tmain" title={item.error ?? item.name}>
+        <span className="tname">{item.name}</span>
+        {item.error && <span className="tsub error">{item.error}</span>}
+      </div>
+      <div className={`progress ${item.status}`}>
+        <div style={{ width: `${failed ? 100 : pct}%` }} />
+      </div>
+      <span className={`tstatus ${failed ? 'error' : ''}`}>{failed ? 'failed' : `${Math.round(pct)}%`}</span>
+      {onCancel ? (
+        <button className="ghost" style={{ padding: 2 }} title="Cancel" onClick={onCancel}>
+          <XIcon size={12} />
+        </button>
+      ) : (
+        <span />
+      )}
+    </div>
+  )
+}
+
+function JobRow(props: {
+  job: TransferJobView
+  speed: number
+  expanded: boolean
+  onToggle(): void
+} & Omit<Props, 'queue' | 'onPauseAll' | 'onResumeAll' | 'onClear'>) {
+  const { job, speed, expanded } = props
+  const Icon = KIND_ICON[job.kind]
+  const single = job.items.total === 1
+  const waiting = job.items.waiting ?? 0
+  return (
+    <div className="job">
+      <div className="transfer-row job-row">
+        <span
+          className="job-toggle"
+          onClick={single ? undefined : props.onToggle}
+          style={{
+            cursor: single ? 'default' : 'pointer',
+            transform: expanded && !single ? 'rotate(90deg)' : 'none'
+          }}
+        >
+          {single ? <Icon size={13} /> : <ChevronIcon size={11} />}
+        </span>
+        <div className="tmain" title={job.title}>
+          <span className="tname">
+            {!single && <Icon size={12} />} {job.title}
+          </span>
+          <span className="tsub">{summary(job, speed)}</span>
+        </div>
+        <div className={`progress ${jobStatus(job)}`}>
+          <div style={{ width: `${percent(job)}%` }} />
+        </div>
+        <span className="tstatus">{formatBytes(job.bytes.total ?? job.bytes.done)}</span>
+        <span className="job-actions">
+          {job.target.type === 'local' && job.items.done > 0 && (
+            <button className="ghost" title="Show in folder" onClick={() => props.onReveal(job.id)}>
+              <FolderIcon size={12} />
+            </button>
+          )}
+          {!job.finished &&
+            (job.paused ? (
+              <button className="ghost" title="Resume" onClick={() => props.onResumeJob(job.id)}>
+                <PlayIcon size={12} />
+              </button>
+            ) : (
+              <button className="ghost" title="Pause" onClick={() => props.onPauseJob(job.id)}>
+                <PauseIcon size={12} />
+              </button>
+            ))}
+          {!job.finished && (
+            <button className="ghost" title="Cancel" onClick={() => props.onCancelJob(job.id)}>
+              <XIcon size={12} />
+            </button>
+          )}
+        </span>
+      </div>
+      {expanded && !single && (
+        <div className="job-items">
+          {job.running.map((item) => (
+            <ItemRow key={`r${item.index}`} item={item} onCancel={() => props.onCancelItem(job.id, item.index)} />
+          ))}
+          {job.failed.map((item) => (
+            <ItemRow key={`f${item.index}`} item={item} />
+          ))}
+          {job.upcoming.length > 0 && (
+            <div className="job-upcoming">
+              · {job.upcoming[0].name}
+              {job.upcoming.length > 1 && ` … ${job.upcoming[job.upcoming.length - 1].name}`}
+              {waiting > job.upcoming.length && (
+                <span className="more"> + {(waiting - job.upcoming.length).toLocaleString()} more waiting</span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function TransferPanel(props: Props) {
+  const { queue } = props
   const [open, setOpen] = useState(true)
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const samples = useRef(new Map<string, SpeedSample>())
 
-  /** smoothed bytes/second from the loaded deltas between renders */
-  function speedOf(t: Transfer): number {
-    if (t.status !== 'running') {
-      samples.current.delete(t.id)
+  /** smoothed bytes/second from the byte deltas between renders */
+  function speedOf(job: TransferJobView): number {
+    if (job.finished || job.paused || job.items.running === 0) {
+      samples.current.delete(job.id)
       return 0
     }
     const now = Date.now()
-    const prev = samples.current.get(t.id)
+    const prev = samples.current.get(job.id)
     if (!prev) {
-      samples.current.set(t.id, { loaded: t.loaded, time: now, speed: 0 })
+      samples.current.set(job.id, { done: job.bytes.done, time: now, speed: 0 })
       return 0
     }
     const dt = now - prev.time
     if (dt < 500) return prev.speed
-    const instant = ((t.loaded - prev.loaded) * 1000) / dt
+    const instant = ((job.bytes.done - prev.done) * 1000) / dt
     const speed = prev.speed > 0 ? prev.speed * 0.7 + instant * 0.3 : instant
-    samples.current.set(t.id, { loaded: t.loaded, time: now, speed })
+    samples.current.set(job.id, { done: job.bytes.done, time: now, speed })
     return speed
   }
 
-  if (transfers.length === 0) return null
+  if (queue.jobs.length === 0) return null
 
-  const active = transfers.filter((t) => t.status === 'running' || t.status === 'queued').length
-  const failed = transfers.filter((t) => t.status === 'error').length
+  const running = queue.jobs.reduce((n, j) => n + j.items.running, 0)
+  const waiting = queue.jobs.reduce((n, j) => n + (j.finished ? 0 : (j.items.waiting ?? 0)), 0)
+  const failed = queue.jobs.reduce((n, j) => n + j.items.failed, 0)
+  const anyActive = queue.jobs.some((j) => !j.finished)
 
   return (
     <div className="transfers">
       <div className="transfers-head" onClick={() => setOpen((v) => !v)}>
-        <span
-          style={{
-            display: 'flex',
-            transform: open ? 'rotate(90deg)' : 'none',
-            transition: 'transform .12s'
-          }}
-        >
+        <span style={{ display: 'flex', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .12s' }}>
           <ChevronIcon size={12} />
         </span>
         <strong style={{ color: 'var(--text)' }}>Transfers</strong>
-        {active > 0 && <span className="badge">{active} active</span>}
+        {running > 0 && <span className="badge">{running} active</span>}
+        {waiting > 0 && <span className="badge">{waiting.toLocaleString()} waiting</span>}
         {failed > 0 && (
-          <span className="badge" style={{ color: 'var(--danger)' }}>{failed} failed</span>
+          <span className="badge" style={{ color: 'var(--danger)' }}>
+            {failed} failed
+          </span>
         )}
+        {queue.paused && <span className="badge">{running > 0 ? `paused — ${running} finishing` : 'paused'}</span>}
         <span className="spacer" />
+        {anyActive && (
+          <button
+            className="ghost"
+            style={{ fontSize: 11.5, padding: '2px 7px' }}
+            onClick={(e) => {
+              e.stopPropagation()
+              if (queue.paused) props.onResumeAll()
+              else props.onPauseAll()
+            }}
+          >
+            {queue.paused ? <PlayIcon size={11} /> : <PauseIcon size={11} />}
+            {queue.paused ? ' Resume all' : ' Pause all'}
+          </button>
+        )}
         <button
           className="ghost"
           style={{ fontSize: 11.5, padding: '2px 7px' }}
           onClick={(e) => {
             e.stopPropagation()
-            onClear()
+            props.onClear()
           }}
         >
           Clear finished
@@ -77,69 +242,16 @@ export default function TransferPanel({ transfers, onCancel, onClear, onReveal }
 
       {open && (
         <div className="transfers-list">
-          {transfers.map((t) => {
-            const pct = t.total > 0 ? Math.min(100, (t.loaded / t.total) * 100) : t.status === 'done' ? 100 : 0
-            const running = t.status === 'running' || t.status === 'queued'
-            const speed = speedOf(t)
-            const subParts: string[] = []
-            if (t.status === 'running' && t.detail) subParts.push(t.detail)
-            if (t.itemsTotal) {
-              subParts.push(
-                t.status === 'running'
-                  ? `${t.itemsDone ?? 0} / ${t.itemsTotal} objects`
-                  : `${t.itemsTotal} objects`
-              )
-              if (t.itemsSkipped) subParts.push(`${t.itemsSkipped} skipped`)
-            }
-            if (t.status === 'running' && speed > 0) subParts.push(`${formatBytes(speed)}/s`)
-            return (
-              <div className="transfer-row" key={t.id}>
-                {t.kind === 'upload' ? (
-                  <UploadIcon size={13} />
-                ) : t.kind === 'download' ? (
-                  <DownloadIcon size={13} />
-                ) : (
-                  <CopyIcon size={13} />
-                )}
-                <div
-                  className="tmain"
-                  title={
-                    t.kind === 'copy'
-                      ? `${t.bucket}/${t.key} → ${t.targetBucket}/${t.targetKey}`
-                      : `${t.bucket}/${t.key}`
-                  }
-                  onDoubleClick={() => t.kind === 'download' && onReveal(t.localPath)}
-                >
-                  <span className="tname">{t.name}</span>
-                  {subParts.length > 0 && <span className="tsub">{subParts.join(' · ')}</span>}
-                </div>
-                <div className={`progress ${t.status}`}>
-                  <div style={{ width: `${pct}%` }} />
-                </div>
-                <span className={`tstatus ${t.status === 'error' ? 'error' : ''}`} title={t.error}>
-                  {t.status === 'error'
-                    ? 'failed'
-                    : t.status === 'cancelled'
-                      ? 'cancelled'
-                      : t.status === 'done'
-                        ? formatBytes(t.total)
-                        : `${Math.round(pct)}%`}
-                </span>
-                {running ? (
-                  <button
-                    className="ghost"
-                    style={{ padding: 2 }}
-                    title="Cancel"
-                    onClick={() => onCancel(t.id)}
-                  >
-                    <XIcon size={12} />
-                  </button>
-                ) : (
-                  <span />
-                )}
-              </div>
-            )
-          })}
+          {queue.jobs.map((job) => (
+            <JobRow
+              key={job.id}
+              {...props}
+              job={job}
+              speed={speedOf(job)}
+              expanded={expanded[job.id] ?? !job.finished}
+              onToggle={() => setExpanded((s) => ({ ...s, [job.id]: !(s[job.id] ?? !job.finished) }))}
+            />
+          ))}
         </div>
       )}
     </div>

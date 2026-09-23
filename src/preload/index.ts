@@ -8,7 +8,11 @@ import type {
   PrefixStats,
   Result,
   S3Entry,
-  Transfer
+  ConflictMode,
+  JobDoneEvent,
+  JobRequest,
+  PlanSummary,
+  QueueSnapshot
 } from '@shared/types'
 
 type EntryRef = { key: string; type: 'file' | 'folder' }
@@ -57,74 +61,31 @@ const api = {
       }
     }
   },
-  transfers: {
-    upload: (accountId: string, bucket: string, prefix: string, paths: string[]) =>
-      call<number>('transfer:upload', accountId, bucket, prefix, paths),
-    download: (accountId: string, bucket: string, entries: EntryRef[], destDir: string) =>
-      call<number>('transfer:download', accountId, bucket, entries, destDir),
-    planCopy: (
-      sourceAccountId: string,
-      sourceBucket: string,
-      entries: (EntryRef & { size?: number })[],
-      targetAccountId: string,
-      targetBucket: string,
-      targetPrefix: string
-    ) =>
-      call<{ total: number; conflicts: number; sample: string[] }>(
-        'transfer:planCopy',
-        sourceAccountId,
-        sourceBucket,
-        entries,
-        targetAccountId,
-        targetBucket,
-        targetPrefix
-      ),
-    copy: (
-      sourceAccountId: string,
-      sourceBucket: string,
-      entries: (EntryRef & { size?: number })[],
-      targetAccountId: string,
-      targetBucket: string,
-      targetPrefix: string,
-      skipExisting = false
-    ) =>
-      call<number>(
-        'transfer:copy',
-        sourceAccountId,
-        sourceBucket,
-        entries,
-        targetAccountId,
-        targetBucket,
-        targetPrefix,
-        skipExisting
-      ),
-    syncBucket: (
-      sourceAccountId: string,
-      sourceBucket: string,
-      sourcePrefix: string,
-      targetAccountId: string,
-      targetBucket: string,
-      targetPrefix: string,
-      skipExisting: boolean
-    ) =>
-      call<number>(
-        'transfer:syncBucket',
-        sourceAccountId,
-        sourceBucket,
-        sourcePrefix,
-        targetAccountId,
-        targetBucket,
-        targetPrefix,
-        skipExisting
-      ),
-    list: () => call<Transfer[]>('transfer:list'),
-    cancel: (id: string) => call<void>('transfer:cancel', id),
-    clearFinished: () => call<void>('transfer:clear'),
-    onUpdate: (cb: (t: Transfer) => void): (() => void) => {
-      const listener = (_e: unknown, t: Transfer): void => cb(t)
-      ipcRenderer.on('transfer:update', listener)
+  queue: {
+    /** expand a transfer and check its targets; nothing runs until enqueue */
+    plan: (req: JobRequest) => call<PlanSummary>('queue:plan', req),
+    enqueue: (planId: string, mode: ConflictMode) => call<string>('queue:enqueue', planId, mode),
+    list: () => call<QueueSnapshot>('queue:list'),
+    pauseAll: () => call<void>('queue:pauseAll'),
+    resumeAll: () => call<void>('queue:resumeAll'),
+    pauseJob: (id: string) => call<void>('queue:pauseJob', id),
+    resumeJob: (id: string) => call<void>('queue:resumeJob', id),
+    cancelJob: (id: string) => call<void>('queue:cancelJob', id),
+    cancelItem: (id: string, index: number) => call<void>('queue:cancelItem', id, index),
+    clearFinished: () => call<void>('queue:clearFinished'),
+    revealJob: (id: string) => call<void>('queue:revealJob', id),
+    onUpdate: (cb: (s: QueueSnapshot) => void): (() => void) => {
+      const listener = (_e: unknown, s: QueueSnapshot): void => cb(s)
+      ipcRenderer.on('queue:update', listener)
       return () => {
-        ipcRenderer.removeListener('transfer:update', listener)
+        ipcRenderer.removeListener('queue:update', listener)
+      }
+    },
+    onJobDone: (cb: (e: JobDoneEvent) => void): (() => void) => {
+      const listener = (_e: unknown, e: JobDoneEvent): void => cb(e)
+      ipcRenderer.on('queue:jobDone', listener)
+      return () => {
+        ipcRenderer.removeListener('queue:jobDone', listener)
       }
     }
   },
@@ -136,7 +97,6 @@ const api = {
       call<boolean>('dialog:confirm', message, detail, confirmLabel)
   },
   system: {
-    showItem: (path: string) => call<void>('shell:showItem', path),
     copyToClipboard: (text: string) => call<void>('clipboard:write', text),
     /** absolute path of a dropped File (File.path no longer exists in Electron ≥ 32) */
     pathForFile: (file: File): string => webUtils.getPathForFile(file),
