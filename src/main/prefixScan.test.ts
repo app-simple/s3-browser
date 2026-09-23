@@ -1,100 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ListObjectsV2Command, type ListObjectsV2CommandInput } from '@aws-sdk/client-s3'
+import { fakeS3 } from './testing/fakeS3'
 import type { PrefixStats } from '@shared/types'
 import { countPrefix, createPrefixScanner } from './prefixScan'
-
-type Obj = { key: string; size: number }
-
-/**
- * Stands in for the network: answers ListObjectsV2 the way S3 does — prefix
- * filtering, delimiter grouping into CommonPrefixes, lexicographic order and
- * paging through continuation tokens. `pageSize` lets a test force several
- * pages without thousands of fixtures; S3 may likewise return fewer keys than
- * MaxKeys, so callers must follow IsTruncated rather than count results.
- */
-function fakeS3(
-  objects: Obj[],
-  pageSize = 1000,
-  opts: { delayMs?: number; failWith?: Error } = {}
-) {
-  const requests: ListObjectsV2CommandInput[] = []
-  const sorted = [...objects].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
-  return {
-    requests,
-    async send(command: ListObjectsV2Command, options?: { abortSignal?: AbortSignal }) {
-      if (!(command instanceof ListObjectsV2Command)) throw new Error('unexpected command')
-      const input = command.input
-      requests.push(input)
-      const aborted = (): Error => {
-        const err = new Error('Request aborted')
-        err.name = 'AbortError'
-        return err
-      }
-      if (options?.abortSignal?.aborted) throw aborted()
-      if (opts.failWith) throw opts.failWith
-      if (opts.delayMs) {
-        // a slow provider: the answer takes a while, and aborting abandons it
-        await new Promise<void>((resolve, reject) => {
-          if (Number.isFinite(opts.delayMs)) setTimeout(resolve, opts.delayMs)
-          options?.abortSignal?.addEventListener('abort', () => reject(aborted()))
-        })
-      }
-
-      const prefix = input.Prefix ?? ''
-      const rows: ({ obj: Obj } | { common: string })[] = []
-      const seen = new Set<string>()
-      for (const o of sorted) {
-        if (!o.key.startsWith(prefix)) continue
-        const rest = o.key.slice(prefix.length)
-        const cut = input.Delimiter ? rest.indexOf(input.Delimiter) : -1
-        if (cut === -1) {
-          rows.push({ obj: o })
-        } else {
-          const common = prefix + rest.slice(0, cut + 1)
-          if (!seen.has(common)) {
-            seen.add(common)
-            rows.push({ common })
-          }
-        }
-      }
-
-      const start = input.ContinuationToken ? Number(input.ContinuationToken.slice('tok-'.length)) : 0
-      const limit = Math.min(pageSize, input.MaxKeys ?? 1000)
-      const page = rows.slice(start, start + limit)
-      const next = start + limit
-      const truncated = next < rows.length
-      const contents = page.flatMap((r) =>
-        'obj' in r
-          ? [
-              {
-                Key: r.obj.key,
-                LastModified: new Date('2026-01-01T00:00:00Z'),
-                ETag: '"d41d8cd98f00b204e9800998ecf8427e"',
-                Size: r.obj.size,
-                StorageClass: 'STANDARD' as const
-              }
-            ]
-          : []
-      )
-      const commons = page.flatMap((r) => ('common' in r ? [{ Prefix: r.common }] : []))
-
-      return {
-        $metadata: { httpStatusCode: 200 },
-        IsTruncated: truncated,
-        // S3 leaves these out entirely rather than sending empty arrays
-        ...(contents.length ? { Contents: contents } : {}),
-        ...(commons.length ? { CommonPrefixes: commons } : {}),
-        Name: 'bucket',
-        Prefix: prefix,
-        Delimiter: input.Delimiter,
-        MaxKeys: input.MaxKeys ?? 1000,
-        KeyCount: page.length,
-        ContinuationToken: input.ContinuationToken,
-        ...(truncated ? { NextContinuationToken: `tok-${next}` } : {})
-      }
-    }
-  }
-}
 
 describe('countPrefix', () => {
   it('counts every object and sums their sizes across all result pages', async () => {
@@ -106,7 +13,7 @@ describe('countPrefix', () => {
         { key: 'd.txt', size: 400 },
         { key: 'e.txt', size: 500 }
       ],
-      2
+      { pageSize: 2 }
     )
 
     const result = await countPrefix(s3, 'bucket', '')
@@ -169,7 +76,7 @@ describe('countPrefix', () => {
         { key: 'd.txt', size: 400 },
         { key: 'e.txt', size: 500 }
       ],
-      2
+      { pageSize: 2 }
     )
     const seen: [number, number][] = []
 
@@ -194,7 +101,7 @@ describe('countPrefix', () => {
         { key: 'e.txt', size: 1 },
         { key: 'f.txt', size: 1 }
       ],
-      2
+      { pageSize: 2 }
     )
     const controller = new AbortController()
 
@@ -208,7 +115,7 @@ describe('countPrefix', () => {
   })
 
   it('gives up on a request that is still in flight when aborted', async () => {
-    const s3 = fakeS3([{ key: 'a.txt', size: 1 }], 1000, { delayMs: Infinity })
+    const s3 = fakeS3([{ key: 'a.txt', size: 1 }], { delayMs: Infinity })
     const controller = new AbortController()
 
     const scan = countPrefix(s3, 'bucket', '', { signal: controller.signal })
@@ -234,7 +141,7 @@ describe('createPrefixScanner', () => {
   })
 
   it('silences the scan it replaces', async () => {
-    const slow = fakeS3([{ key: 'big/a.txt', size: 1 }], 1000, { delayMs: 60 })
+    const slow = fakeS3([{ key: 'big/a.txt', size: 1 }], { delayMs: 60 })
     const fast = fakeS3([{ key: 'small/b.txt', size: 2 }])
     const events: PrefixStats[] = []
     const scanner = createPrefixScanner({
@@ -258,7 +165,7 @@ describe('createPrefixScanner', () => {
       $fault: 'client',
       $metadata: { httpStatusCode: 403 }
     })
-    const s3 = fakeS3([], 1000, { failWith: denied })
+    const s3 = fakeS3([], { failWith: denied })
     const events: PrefixStats[] = []
     const scanner = createPrefixScanner({ getClient: () => s3, emit: (e) => events.push(e) })
 
@@ -296,7 +203,7 @@ describe('createPrefixScanner', () => {
         { key: 'd.txt', size: 400 },
         { key: 'e.txt', size: 500 }
       ],
-      2
+      { pageSize: 2 }
     )
     const events: PrefixStats[] = []
     const scanner = createPrefixScanner({
@@ -326,7 +233,7 @@ describe('createPrefixScanner', () => {
         { key: 'd.txt', size: 400 },
         { key: 'e.txt', size: 500 }
       ],
-      2
+      { pageSize: 2 }
     )
     const events: PrefixStats[] = []
     const scanner = createPrefixScanner({
@@ -344,7 +251,7 @@ describe('createPrefixScanner', () => {
   })
 
   it('stop() silences the running scan without starting another', async () => {
-    const slow = fakeS3([{ key: 'big/a.txt', size: 1 }], 1000, { delayMs: 60 })
+    const slow = fakeS3([{ key: 'big/a.txt', size: 1 }], { delayMs: 60 })
     const events: PrefixStats[] = []
     const scanner = createPrefixScanner({ getClient: () => slow, emit: (e) => events.push(e) })
 
