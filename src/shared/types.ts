@@ -111,3 +111,13 @@ export interface Result<T> {
   data?: T
   error?: string
 }
+
+/** Running or final totals of a folder count, as reported to the renderer. */
+export interface PrefixStats {
+  /** chosen by the renderer, so it can drop events from a folder it has left */
+  scanId: string
+  objects: number
+  bytes: number
+  done: boolean
+  error?: string
+}

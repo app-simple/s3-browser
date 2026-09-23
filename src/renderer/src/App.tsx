@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Account, BucketInfo, S3Entry, Transfer } from '@shared/types'
+import type { Account, BucketInfo, PrefixStats, S3Entry, Transfer } from '@shared/types'
 import { formatBytes } from '@shared/format'
 import Sidebar from './components/Sidebar'
 import AccountDialog from './components/AccountDialog'
@@ -26,6 +26,8 @@ type PromptKind =
   | { kind: 'newBucket'; accountId: string }
   | { kind: 'rename'; entry: S3Entry }
   | null
+
+let scanCounter = 0
 
 export default function App() {
   const isMac = window.api.system.platform === 'darwin'
@@ -64,6 +66,9 @@ export default function App() {
   const [dragging, setDragging] = useState(false)
 
   const dragCounter = useRef(0)
+  // totals for everything under the open folder, counted in the background
+  const [folderStats, setFolderStats] = useState<PrefixStats | null>(null)
+  const scanId = useRef<string | null>(null)
 
   // ---------- bootstrap ----------
   useEffect(() => {
@@ -78,6 +83,32 @@ export default function App() {
         return next
       })
     })
+  }, [])
+
+  // events from a folder the user has already left are dropped here
+  useEffect(
+    () =>
+      window.api.s3.onPrefixStats((stats) => {
+        if (stats.scanId === scanId.current) setFolderStats(stats)
+      }),
+    []
+  )
+
+  const startFolderScan = useCallback((id: string, b: string, p: string) => {
+    const next = `scan-${++scanCounter}`
+    scanId.current = next
+    setFolderStats({ scanId: next, objects: 0, bytes: 0, done: false })
+    window.api.s3.scanPrefix(next, id, b, p).catch((e) => {
+      if (scanId.current !== next) return
+      const error = e instanceof Error ? e.message : String(e)
+      setFolderStats({ scanId: next, objects: 0, bytes: 0, done: true, error })
+    })
+  }, [])
+
+  const stopFolderScan = useCallback(() => {
+    scanId.current = null
+    setFolderStats(null)
+    void window.api.s3.stopScan()
   }, [])
 
   const loadBuckets = useCallback(async (id: string) => {
@@ -98,6 +129,8 @@ export default function App() {
     async (id: string, b: string, p: string, token?: string) => {
       setLoading(true)
       setError(null)
+      // a first page means a new folder or a refresh: recount it
+      if (!token) startFolderScan(id, b, p)
       try {
         const res = await window.api.s3.listObjects(id, b, p, token)
         setEntries((prev) => (token ? [...prev, ...res.entries] : res.entries))
@@ -109,10 +142,11 @@ export default function App() {
         setLoading(false)
       }
     },
-    []
+    [startFolderScan]
   )
 
   function selectAccount(id: string): void {
+    stopFolderScan()
     setAccountId(id)
     setBucket(null)
     setPrefix('')
@@ -316,6 +350,7 @@ export default function App() {
     try {
       await window.api.s3.deleteBucket(accId, name)
       if (accountId === accId && bucket === name) {
+        stopFolderScan()
         setBucket(null)
         setEntries([])
       }
@@ -371,6 +406,7 @@ export default function App() {
       return next
     })
     if (accountId === acc.id) {
+      stopFolderScan()
       setAccountId(null)
       setBucket(null)
       setEntries([])
@@ -634,6 +670,27 @@ export default function App() {
               <span>{formatBytes(totalSize)} on this page</span>
               {selected.size > 0 && <span>{selected.size} selected</span>}
               {nextToken && <span>more available</span>}
+              {folderStats && (
+                <span
+                  className="folder-total"
+                  title={
+                    folderStats.error
+                      ? `Could not count this folder: ${folderStats.error}`
+                      : 'Everything under this folder, subfolders included'
+                  }
+                >
+                  {folderStats.error ? (
+                    '—'
+                  ) : (
+                    <>
+                      {!folderStats.done && <span className="spinner" />}
+                      {folderStats.objects.toLocaleString()} object
+                      {folderStats.objects === 1 ? '' : 's'} · {formatBytes(folderStats.bytes)}
+                      {folderStats.done ? ' total' : ''}
+                    </>
+                  )}
+                </span>
+              )}
             </>
           ) : (
             <span>

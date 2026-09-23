@@ -10,6 +10,7 @@ import { isAbsolute } from 'node:path'
 import * as store from './store'
 import * as s3 from './s3'
 import * as transfers from './transfers'
+import { createPrefixScanner } from './prefixScan'
 import { isAppUrl } from './origin'
 import type { AccountInput, Result } from '@shared/types'
 
@@ -51,6 +52,15 @@ function assertAbsolutePath(value: unknown, what: string): asserts value is stri
 const MAX_PRESIGN_SECONDS = 7 * 24 * 60 * 60
 
 export function registerIpc(): void {
+  const scanner = createPrefixScanner({
+    getClient: (accountId) => s3.getClient(accountId),
+    emit: (stats) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) win.webContents.send('prefix:stats', stats)
+      }
+    }
+  })
+
   // ---- accounts -------------------------------------------------------
   wrap('accounts:list', () => store.listAccounts())
   wrap('accounts:save', (input: AccountInput) => {
@@ -89,6 +99,14 @@ export function registerIpc(): void {
     entry: { key: string; type: 'file' | 'folder' },
     newName: string
   ) => s3.renameEntry(accountId, bucket, entry, newName))
+  wrap('s3:scanPrefix', (scanId: unknown, accountId: string, bucket: string, prefix: unknown) => {
+    if (typeof scanId !== 'string' || !scanId || scanId.length > 64) {
+      throw new Error('Invalid scan id')
+    }
+    if (typeof prefix !== 'string') throw new Error('Invalid prefix')
+    scanner.start(scanId, accountId, bucket, prefix)
+  })
+  wrap('s3:stopScan', () => scanner.stop())
   wrap('s3:presign', (accountId: string, bucket: string, key: string, expiresIn: number) => {
     if (!Number.isInteger(expiresIn) || expiresIn < 1 || expiresIn > MAX_PRESIGN_SECONDS) {
       throw new Error('Link expiry must be between 1 second and 7 days')

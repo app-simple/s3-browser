@@ -5,6 +5,7 @@ import type {
   BucketInfo,
   ListResult,
   ObjectDetails,
+  PrefixStats,
   Result,
   S3Entry,
   Transfer
@@ -43,7 +44,18 @@ const api = {
     rename: (accountId: string, bucket: string, entry: EntryRef, newName: string) =>
       call<void>('s3:rename', accountId, bucket, entry, newName),
     presign: (accountId: string, bucket: string, key: string, expiresIn: number) =>
-      call<string>('s3:presign', accountId, bucket, key, expiresIn)
+      call<string>('s3:presign', accountId, bucket, key, expiresIn),
+    /** count everything under a prefix; results arrive through onPrefixStats */
+    scanPrefix: (scanId: string, accountId: string, bucket: string, prefix: string) =>
+      call<void>('s3:scanPrefix', scanId, accountId, bucket, prefix),
+    stopScan: () => call<void>('s3:stopScan'),
+    onPrefixStats: (cb: (s: PrefixStats) => void): (() => void) => {
+      const listener = (_e: unknown, s: PrefixStats): void => cb(s)
+      ipcRenderer.on('prefix:stats', listener)
+      return () => {
+        ipcRenderer.removeListener('prefix:stats', listener)
+      }
+    }
   },
   transfers: {
     upload: (accountId: string, bucket: string, prefix: string, paths: string[]) =>
