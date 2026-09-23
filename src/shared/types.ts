@@ -121,3 +121,89 @@ export interface PrefixStats {
   done: boolean
   error?: string
 }
+
+export type JobKind = 'upload' | 'download' | 'copy' | 'sync'
+export type ItemStatus = 'queued' | 'running' | 'done' | 'skipped' | 'error' | 'cancelled'
+export type ConflictMode = 'skip' | 'overwrite'
+
+/** Where a job writes; the renderer uses it to refresh the open folder when the job ends. */
+export type JobTarget =
+  | { type: 's3'; accountId: string; bucket: string; prefix: string }
+  | { type: 'local'; dir: string }
+
+export interface TransferItemView {
+  index: number
+  name: string
+  size: number
+  loaded: number
+  status: ItemStatus
+  error?: string
+}
+
+/** A job as the transfer panel sees it: totals plus the few items worth listing. */
+export interface TransferJobView {
+  id: string
+  kind: JobKind
+  title: string
+  target: JobTarget
+  createdAt: number
+  paused: boolean
+  finished: boolean
+  /** set when the job as a whole gave up, e.g. its connection was deleted */
+  error?: string
+  items: {
+    /** null while a bucket sync is still being counted */
+    total: number | null
+    /** null while a bucket sync is still listing */
+    waiting: number | null
+    running: number
+    done: number
+    skipped: number
+    failed: number
+    cancelled: number
+  }
+  bytes: { total: number | null; done: number }
+  running: TransferItemView[]
+  failed: TransferItemView[]
+  upcoming: TransferItemView[]
+}
+
+export interface QueueSnapshot {
+  paused: boolean
+  jobs: TransferJobView[]
+  /** unfinished jobs from the previous session, waiting for Resume or Discard */
+  restore: { jobs: number; items: number } | null
+}
+
+export interface EntryRef {
+  key: string
+  type: 'file' | 'folder'
+  size?: number
+}
+
+export interface S3Location {
+  accountId: string
+  bucket: string
+  prefix: string
+}
+
+/** What the renderer asks the queue to transfer. */
+export type JobRequest =
+  | { kind: 'upload'; accountId: string; bucket: string; prefix: string; paths: string[] }
+  | { kind: 'download'; accountId: string; bucket: string; entries: EntryRef[]; destDir: string }
+  | { kind: 'copy'; accountId: string; bucket: string; entries: EntryRef[]; target: S3Location }
+  | { kind: 'sync'; accountId: string; bucket: string; prefix: string; target: S3Location }
+
+export interface PlanSummary {
+  planId: string
+  /** null for a bucket sync, whose items are listed while it runs */
+  total: number | null
+  conflicts: number
+  sample: string[]
+}
+
+export interface JobDoneEvent {
+  jobId: string
+  kind: JobKind
+  target: JobTarget
+}
