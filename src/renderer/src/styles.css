@@ -391,6 +391,18 @@ td.col-size, td.col-date, td.col-class { color: var(--text-dim); font-variant-nu
   white-space: nowrap;
 }
 .job-upcoming .more { color: var(--text-dim); }
+.restore-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-elev-2);
+  font-size: 12px;
+  color: var(--text-dim);
+}
 
 .badge {
   font-size: 11px;

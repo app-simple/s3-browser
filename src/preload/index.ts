@@ -73,6 +73,7 @@ const api = {
     cancelJob: (id: string) => call<void>('queue:cancelJob', id),
     cancelItem: (id: string, index: number) => call<void>('queue:cancelItem', id, index),
     clearFinished: () => call<void>('queue:clearFinished'),
+    restore: (decision: 'resume' | 'discard') => call<void>('queue:restore', decision),
     revealJob: (id: string) => call<void>('queue:revealJob', id),
     onUpdate: (cb: (s: QueueSnapshot) => void): (() => void) => {
       const listener = (_e: unknown, s: QueueSnapshot): void => cb(s)

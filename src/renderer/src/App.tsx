@@ -646,6 +646,11 @@ export default function App() {
           onCancelItem={(id, index) => void window.api.queue.cancelItem(id, index)}
           onClear={() => void window.api.queue.clearFinished()}
           onReveal={(id) => void window.api.queue.revealJob(id)}
+          onRestore={(decision) =>
+            void window.api.queue
+              .restore(decision)
+              .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+          }
         />
 
         <div className="statusbar">

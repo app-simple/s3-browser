@@ -22,6 +22,7 @@ interface Props {
   onCancelItem(id: string, index: number): void
   onClear(): void
   onReveal(id: string): void
+  onRestore(decision: 'resume' | 'discard'): void
 }
 
 interface SpeedSample {
@@ -91,7 +92,7 @@ function JobRow(props: {
   speed: number
   expanded: boolean
   onToggle(): void
-} & Omit<Props, 'queue' | 'onPauseAll' | 'onResumeAll' | 'onClear'>) {
+} & Omit<Props, 'queue' | 'onPauseAll' | 'onResumeAll' | 'onClear' | 'onRestore'>) {
   const { job, speed, expanded } = props
   const Icon = KIND_ICON[job.kind]
   const single = job.items.total === 1
@@ -165,6 +166,11 @@ function JobRow(props: {
   )
 }
 
+function restoreText(r: { jobs: number; items: number }): string {
+  const jobs = `${r.jobs} unfinished job${r.jobs === 1 ? '' : 's'} from last time`
+  return r.items > 0 ? `${jobs} — ${r.items.toLocaleString()} transfer${r.items === 1 ? '' : 's'} waiting` : jobs
+}
+
 export default function TransferPanel(props: Props) {
   const { queue } = props
   const [open, setOpen] = useState(true)
@@ -191,7 +197,7 @@ export default function TransferPanel(props: Props) {
     return speed
   }
 
-  if (queue.jobs.length === 0) return null
+  if (queue.jobs.length === 0 && !queue.restore) return null
 
   const running = queue.jobs.reduce((n, j) => n + j.items.running, 0)
   const waiting = queue.jobs.reduce((n, j) => n + (j.finished ? 0 : (j.items.waiting ?? 0)), 0)
@@ -239,6 +245,19 @@ export default function TransferPanel(props: Props) {
           Clear finished
         </button>
       </div>
+
+      {queue.restore && (
+        <div className="restore-bar">
+          <span>{restoreText(queue.restore)}</span>
+          <span className="spacer" />
+          <button className="primary" onClick={() => props.onRestore('resume')}>
+            Resume
+          </button>
+          <button className="ghost" onClick={() => props.onRestore('discard')}>
+            Discard
+          </button>
+        </div>
+      )}
 
       {open && (
         <div className="transfers-list">

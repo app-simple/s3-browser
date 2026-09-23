@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import { join } from 'node:path'
 import {
+  app,
   ipcMain,
   dialog,
   shell,
@@ -13,6 +15,7 @@ import { createPrefixScanner } from './prefixScan'
 import { createJobFactory } from './jobFactory'
 import { parseJobRequest } from './jobRequest'
 import { createQueueService } from './queueService'
+import { createQueueStore } from './queueStore'
 import { isAppUrl } from './origin'
 import type { AccountInput, ConflictMode, Result } from '@shared/types'
 
@@ -75,11 +78,14 @@ export function registerIpc(): void {
       accountExists: (accountId) => store.getAccount(accountId) !== undefined,
       listKeys: (accountId, bucket, prefix) => s3.listAllKeys(accountId, bucket, prefix)
     }),
+    store: createQueueStore(join(app.getPath('userData'), 'queue')),
     emit: (snapshot) => broadcast('queue:update', snapshot),
     onJobDone: (event) => broadcast('queue:jobDone', event),
     newId: () => randomUUID(),
     now: () => Date.now()
   })
+  // unfinished jobs from the previous session are offered, never started unasked
+  queue.init()
 
   // ---- accounts -------------------------------------------------------
   wrap('accounts:list', () => store.listAccounts())
@@ -150,6 +156,10 @@ export function registerIpc(): void {
     queue.cancelItem(jobId(id), index)
   })
   wrap('queue:clearFinished', () => queue.clearFinished())
+  wrap('queue:restore', (decision: unknown) => {
+    if (decision !== 'resume' && decision !== 'discard') throw new Error('Invalid choice')
+    return queue.restore(decision)
+  })
   // the folder comes from the job itself, never from the renderer
   wrap('queue:revealJob', async (id: unknown) => {
     const dir = queue.revealDir(jobId(id))
