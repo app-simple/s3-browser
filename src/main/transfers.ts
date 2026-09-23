@@ -10,19 +10,12 @@ import {
 } from 'node:fs'
 import { pipeline } from 'node:stream/promises'
 import { Readable, Transform } from 'node:stream'
-import {
-  dirname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-  sep,
-  basename as pathBasename
-} from 'node:path'
+import { dirname, join, relative, sep, basename as pathBasename } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { BrowserWindow } from 'electron'
 import type { Transfer, TransferKind } from '@shared/types'
 import { getClient, listAllKeys } from './s3'
+import { localPathFor } from './transferItems'
 
 const transfers = new Map<string, Transfer>()
 const aborters = new Map<string, AbortController>()
@@ -95,29 +88,6 @@ export function isDownloadedPath(path: string): boolean {
   return false
 }
 
-/**
- * Map an object key (relative to the download root) onto a path inside destDir.
- * Keys on shared buckets are attacker-controlled: ".."/"." segments, backslashes
- * and drive prefixes must never let a download escape the folder the user picked.
- */
-export function localPathFor(destDir: string, rel: string): string {
-  const segments = rel.split('/').filter((seg) => seg.length > 0)
-  if (segments.length === 0) throw new Error(`Cannot derive a file name from "${rel}"`)
-  for (const seg of segments) {
-    const dotOnly = seg === '.' || seg === '..'
-    const badChars = /[\\\0]/.test(seg) || (process.platform === 'win32' && seg.includes(':'))
-    if (dotOnly || badChars) {
-      throw new Error(`Refusing to write "${rel}": unsafe path segment "${seg}"`)
-    }
-  }
-  const root = resolve(destDir)
-  const target = resolve(root, ...segments)
-  const inside = relative(root, target)
-  if (!inside || inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) {
-    throw new Error(`Refusing to write "${rel}" outside of ${root}`)
-  }
-  return target
-}
 
 /**
  * Expand local paths (files and directories) into { absolute path, key suffix } pairs.
