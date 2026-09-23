@@ -43,6 +43,8 @@ function percent(job: TransferJobView): number {
 /** One line under the title: how far the job is and what it is doing right now. */
 function summary(job: TransferJobView, speed: number): string {
   if (job.error) return `Failed — ${job.error}`
+  // a single-file job never expands, so its reason has to show right here
+  if (job.items.total === 1 && job.failed.length > 0) return `Failed — ${job.failed[0].error}`
   const { items } = job
   const settled = (items.done + items.skipped).toLocaleString()
   const parts = [items.total === null ? `${settled} objects` : `${settled} / ${items.total.toLocaleString()}`]

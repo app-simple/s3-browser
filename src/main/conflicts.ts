@@ -23,6 +23,9 @@ export type TargetCheck = { head: string } | { list: string; keys: string[] }
 /** HEADs run a few at a time, so a selection of loose files is not one round trip each. */
 const PARALLEL_HEADS = 8
 
+const statusOf = (err: unknown): number | undefined =>
+  (err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode
+
 export function s3Probe(client: Sender, bucket: string): Probe {
   return {
     async head(key) {
@@ -30,7 +33,7 @@ export function s3Probe(client: Sender, bucket: string): Probe {
         await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }))
         return true
       } catch (err) {
-        const status = (err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode
+        const status = statusOf(err)
         // 404: not there. 403: what S3 answers for a missing key when the caller may not
         // list the bucket — typical for upload-only credentials — so it is no conflict either
         if (status === 404 || status === 403) return false
@@ -40,13 +43,19 @@ export function s3Probe(client: Sender, bucket: string): Probe {
     async list(prefix, wanted) {
       const found: string[] = []
       let token: string | undefined
-      do {
-        const res = (await client.send(
-          new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix, MaxKeys: 1000, ContinuationToken: token })
-        )) as ListObjectsV2CommandOutput
-        for (const o of res.Contents ?? []) if (o.Key && wanted.has(o.Key)) found.push(o.Key)
-        token = res.IsTruncated ? res.NextContinuationToken : undefined
-      } while (token)
+      try {
+        do {
+          const res = (await client.send(
+            new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix, MaxKeys: 1000, ContinuationToken: token })
+          )) as ListObjectsV2CommandOutput
+          for (const o of res.Contents ?? []) if (o.Key && wanted.has(o.Key)) found.push(o.Key)
+          token = res.IsTruncated ? res.NextContinuationToken : undefined
+        } while (token)
+      } catch (err) {
+        // upload-only credentials may not list: nothing is known to clash, so nothing blocks
+        if (statusOf(err) === 403) return found
+        throw err
+      }
       return found
     }
   }

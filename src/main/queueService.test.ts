@@ -310,4 +310,39 @@ describe('queue service across restarts', () => {
     await expect(two.svc.restore('resume')).rejects.toThrow('could not be resumed: network down')
     expect(two.svc.snapshot().restore).toEqual({ jobs: 1, items: 3 })
   })
+
+  it('tells a listing job which of its objects failed', async () => {
+    const seen: [number, boolean][] = []
+    const factory: JobFactory = {
+      plan: async () => ({
+        kind: 'sync',
+        title: 'Sync',
+        target: { type: 's3', accountId: 'a', bucket: 'c', prefix: '' },
+        items: null,
+        conflicts: [],
+        sample: [],
+        spec: {}
+      }),
+      runtime: () => ({
+        source: arraySource(items(2)),
+        onSettled: (index, ok) => {
+          seen.push([index, ok])
+          return undefined
+        },
+        run: async (item) => {
+          if (item.index === 1) throw new Error('Access Denied')
+          return 'done'
+        }
+      })
+    }
+    const { svc } = service(factory)
+
+    svc.enqueue((await svc.plan(request)).planId, 'overwrite')
+    await settle()
+
+    expect(seen.sort()).toEqual([
+      [0, true],
+      [1, false]
+    ])
+  })
 })

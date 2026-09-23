@@ -11,6 +11,8 @@ import {
   lstatSync,
   mkdirSync,
   readdirSync,
+  renameSync,
+  rmSync,
   statSync
 } from 'node:fs'
 import { pipeline } from 'node:stream/promises'
@@ -204,7 +206,16 @@ export async function runDownload(
       cb(null, chunk)
     }
   })
-  await pipeline(res.Body as Readable, meter, createWriteStream(target), { signal: ctx.signal })
+  // write beside the target and move it into place only when complete: a download that breaks
+  // off, is cancelled or is cut by quitting never leaves a truncated file that looks finished
+  const partial = `${target}.part`
+  try {
+    await pipeline(res.Body as Readable, meter, createWriteStream(partial), { signal: ctx.signal })
+  } catch (err) {
+    rmSync(partial, { force: true })
+    throw err
+  }
+  renameSync(partial, target)
   return 'done'
 }
 

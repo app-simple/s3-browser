@@ -143,4 +143,35 @@ describe('job factory', () => {
 
     expect(exists).toEqual([5])
   })
+
+  it('keeps a sync into a folder of the same bucket from copying its own copies', async () => {
+    const s3 = fakeS3([
+      { key: 'a/x', size: 1 },
+      { key: 'backups/a/x', size: 1 }
+    ])
+    const withS3 = createJobFactory({
+      getClient: () => s3 as unknown as S3Client,
+      accountExists: () => true,
+      listKeys: async () => []
+    })
+    const runtime = withS3.runtime(
+      {
+        id: 'j',
+        kind: 'sync',
+        spec: { accountId: 'acc', bucket: 'b', prefix: '', target: { accountId: 'acc', bucket: 'b', prefix: 'backups/' } },
+        conflict: 'overwrite'
+      },
+      () => {}
+    )
+
+    const keys: string[] = []
+    for (let guard = 0; guard < 20; guard++) {
+      const took = runtime.source!.take()
+      if ('item' in took) keys.push((took.item.data as { key: string }).key)
+      else if ('exhausted' in took) break
+      else await new Promise((r) => setTimeout(r, 0))
+    }
+
+    expect(keys).toEqual(['a/x'])
+  })
 })

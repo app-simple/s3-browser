@@ -35,8 +35,8 @@ export interface JobRuntime {
   run(item: QueueItem, ctx: RunContext): Promise<'done' | 'skipped'>
   /** jobs that list their items as they go bring their own source */
   source?: ItemSource
-  /** told about every settled item; returns a new resume mark when it moved */
-  onSettled?(index: number): string | undefined
+  /** told about every settled item (ok: not failed); returns a new resume mark when it moved */
+  onSettled?(index: number, ok: boolean): string | undefined
 }
 
 export interface RuntimeRequest {
@@ -90,7 +90,7 @@ export function createQueueService(deps: {
         progress.items++
         progress.bytes += item.size
       }
-      const key = runtime.onSettled?.(item.index)
+      const key = runtime.onSettled?.(item.index, status !== 'error')
       if (key !== undefined && progress) deps.store.mark(jobId, { ...progress, key })
     },
     onJobPausedChanged: (jobId, paused) => deps.store.paused(jobId, paused),
@@ -261,7 +261,6 @@ export function createQueueService(deps: {
       const id = deps.newId()
       const createdAt = deps.now()
       const runtime = deps.factory.runtime({ id, kind: planned.kind, spec: planned.spec, conflict: mode }, wake)
-      register(id, planned.kind, planned.target, runtime)
 
       const skip = new Set(mode === 'skip' ? planned.conflicts : [])
       const all = planned.items ?? []
@@ -282,6 +281,8 @@ export function createQueueService(deps: {
           : null
       })
       for (const item of skipped) deps.store.settle(id, item.index, { status: 'skipped' })
+      // only a job whose file was written becomes known; a failed write leaves nothing behind
+      register(id, planned.kind, planned.target, runtime)
       if (runtime.source) listed.set(id, { items: 0, bytes: 0 })
 
       queue.add({

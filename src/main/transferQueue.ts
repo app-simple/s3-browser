@@ -134,6 +134,15 @@ const itemView = (item: QueueItem, status: TransferItemView['status'], loaded = 
   ...(error === undefined ? {} : { error })
 })
 
+/** A hook that throws (e.g. a full disk while saving progress) must not stall the queue. */
+function safely(hook: () => void): void {
+  try {
+    hook()
+  } catch (err) {
+    console.error('transfer queue hook failed:', err)
+  }
+}
+
 export function createTransferQueue(hooks: QueueHooks = {}) {
   const jobs: JobState[] = []
   let paused = false
@@ -141,7 +150,7 @@ export function createTransferQueue(hooks: QueueHooks = {}) {
   /** the job that got the last slot; the next slot goes to the one after it */
   let lastServed: string | undefined
 
-  const changed = (): void => hooks.onChange?.()
+  const changed = (): void => safely(() => hooks.onChange?.())
   const find = (id: string): JobState | undefined => jobs.find((j) => j.init.id === id)
   const active = (job: JobState): boolean => !job.finished && !job.cancelled && !job.error
 
@@ -149,7 +158,7 @@ export function createTransferQueue(hooks: QueueHooks = {}) {
     if (job.finished || job.running.size > 0) return
     if (active(job) && job.init.source.waiting() !== 0) return
     job.finished = true
-    hooks.onJobFinished?.(job.init.id)
+    safely(() => hooks.onJobFinished?.(job.init.id))
   }
 
   function fail(job: JobState, message: string): void {
@@ -231,7 +240,7 @@ export function createTransferQueue(hooks: QueueHooks = {}) {
     } else {
       job.failed.push({ item: entry.item, error: error ?? 'Unknown error' })
     }
-    hooks.onItemSettled?.(job.init.id, entry.item, status, error)
+    safely(() => hooks.onItemSettled?.(job.init.id, entry.item, status, error))
     finishIfIdle(job)
     changed()
     pump()
@@ -307,14 +316,14 @@ export function createTransferQueue(hooks: QueueHooks = {}) {
       const job = find(id)
       if (!job || job.paused || job.finished) return
       job.paused = true
-      hooks.onJobPausedChanged?.(id, true)
+      safely(() => hooks.onJobPausedChanged?.(id, true))
       changed()
     },
     resumeJob(id: string): void {
       const job = find(id)
       if (!job || !job.paused) return
       job.paused = false
-      hooks.onJobPausedChanged?.(id, false)
+      safely(() => hooks.onJobPausedChanged?.(id, false))
       changed()
       pump()
     },

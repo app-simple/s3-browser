@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { existingLocal, existingTargets, s3Probe, targetChecks } from './conflicts'
-import { fakeS3 } from './testing/fakeS3'
+import { fakeS3, httpError } from './testing/fakeS3'
 
 const many = (n: number, prefix = '') =>
   Array.from({ length: n }, (_, i) => ({ key: `${prefix}obj-${String(i).padStart(5, '0')}`, size: 1 }))
@@ -56,5 +56,15 @@ describe('conflict checks', () => {
     const found = existingLocal(dest, ['photos/a.jpg', 'photos/b.jpg', '../escape'])
 
     expect([...found]).toEqual(['photos/a.jpg'])
+  })
+
+  it('treats a folder the credentials may not list as having no known conflicts', async () => {
+    const s3 = fakeS3([{ key: 'photos/a.jpg', size: 1 }], {
+      failWith: httpError(403, 'AccessDenied', 'Access Denied')
+    })
+
+    const found = await existingTargets(targetChecks('', ['photos/a.jpg', 'photos/b.jpg']), s3Probe(s3, 'b'))
+
+    expect(found.size).toBe(0)
   })
 })

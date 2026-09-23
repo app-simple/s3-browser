@@ -5,6 +5,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  truncateSync,
   writeFileSync
 } from 'node:fs'
 import { join } from 'node:path'
@@ -180,7 +181,9 @@ export function createQueueStore(dir: string) {
         }
         const lines = log.split('\n')
         // the last element is '' after the final newline, or a line a crash cut short
-        lines.pop()
+        const torn = lines.pop()
+        // cut the torn tail off, or the next line appended would be glued onto it
+        if (torn) truncateSync(file(id, 'log'), Buffer.byteLength(log) - Buffer.byteLength(torn))
         for (const line of lines) parse(line, restored)
         out.push(restored)
       }

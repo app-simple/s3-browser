@@ -10,7 +10,7 @@ export interface ListingSource extends ItemSource<SyncEntry> {
   /** the whole prefix's size, once a parallel count has finished */
   setTotals(items: number, bytes: number): void
   /** record that an item settled; returns the new resume mark if it moved */
-  settle(index: number): string | undefined
+  settle(index: number, ok?: boolean): string | undefined
 }
 
 /**
@@ -24,6 +24,8 @@ export function listingSource(opts: {
   prefix: string
   /** continue after this key, from the mark of a previous run */
   startAfter?: string
+  /** never hand out keys under this prefix: a sync's own target inside its source */
+  exclude?: string
   /** a page arrived: the queue should ask again */
   wake(): void
 }): ListingSource {
@@ -39,6 +41,8 @@ export function listingSource(opts: {
   const handedOut = new Map<number, string>()
   const settledAhead = new Set<number>()
   let contiguous = 0
+  // the mark never passes a failed object, so a restart tries it again
+  let firstFailure = Infinity
 
   async function fetchPage(): Promise<void> {
     fetching = true
@@ -56,6 +60,8 @@ export function listingSource(opts: {
       for (const o of res.Contents ?? []) {
         // "folder/" placeholders are not documents
         if (!o.Key || o.Key.endsWith('/')) continue
+        // copies this sync writes into its own source would otherwise be listed and copied again
+        if (opts.exclude && o.Key.startsWith(opts.exclude)) continue
         buffer.push({
           index: nextIndex++,
           name: o.Key.slice(opts.prefix.length),
@@ -98,10 +104,11 @@ export function listingSource(opts: {
     setTotals(items, bytes) {
       totals = { items, bytes }
     },
-    settle(index) {
+    settle(index, ok = true) {
+      if (!ok) firstFailure = Math.min(firstFailure, index)
       settledAhead.add(index)
       let mark: string | undefined
-      while (settledAhead.has(contiguous)) {
+      while (contiguous < firstFailure && settledAhead.has(contiguous)) {
         mark = handedOut.get(contiguous)
         handedOut.delete(contiguous)
         settledAhead.delete(contiguous)

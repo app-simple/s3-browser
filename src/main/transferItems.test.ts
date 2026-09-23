@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import { Readable } from 'node:stream'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { S3Client } from '@aws-sdk/client-s3'
@@ -11,6 +12,7 @@ import {
   localPathFor,
   runDownload,
   runUpload,
+  type GetClient,
   type ListKeys
 } from './transferItems'
 import type { RunContext } from './transferQueue'
@@ -119,5 +121,25 @@ describe('running items', () => {
     )
 
     expect(readFileSync(join(dest, 'sub', 'a.txt'), 'utf8')).toBe('hello')
+  })
+
+  it('leaves no file at the target when a download breaks off', async () => {
+    const dest = tmp()
+    const broken = {
+      send: async () => ({
+        $metadata: {},
+        Body: new Readable({
+          read() {
+            this.push(Buffer.from('half'))
+            this.destroy(new Error('connection reset'))
+          }
+        })
+      })
+    } as unknown as GetClient
+
+    await expect(
+      runDownload(broken, 'b', dest, { index: 0, name: 'a.txt', size: 10, data: { key: 'k', rel: 'a.txt' } }, ctx())
+    ).rejects.toThrow('connection reset')
+    expect(existsSync(join(dest, 'a.txt'))).toBe(false)
   })
 })

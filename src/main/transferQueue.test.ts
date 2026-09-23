@@ -293,4 +293,19 @@ describe('transfer queue', () => {
     expect(queue.view().map((j) => j.id)).toEqual(['b'])
     expect(queue.has('a')).toBe(false)
   })
+
+  it('keeps dispatching when a hook throws', async () => {
+    const a = manual()
+    const queue = createTransferQueue({
+      onItemSettled: () => {
+        throw new Error('ENOSPC: no space left on device')
+      }
+    })
+    queue.add(job('a', 6, a))
+
+    a.live.get(0)!.finish()
+    await settle()
+
+    expect(a.started).toEqual([0, 1, 2, 3, 4])
+  })
 })

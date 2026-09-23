@@ -85,15 +85,24 @@ export function createJobFactory(deps: FactoryDeps): JobFactory {
     startAfter: string | undefined,
     wake: () => void
   ): JobRuntime {
+    // a target folder inside the source must not be listed back as more work
+    const targetInsideSource =
+      spec.accountId === spec.target.accountId &&
+      spec.bucket === spec.target.bucket &&
+      spec.target.prefix !== spec.prefix &&
+      spec.target.prefix.startsWith(spec.prefix)
     const source = listingSource({
       client: () => client(spec.accountId),
       bucket: spec.bucket,
       prefix: spec.prefix,
       startAfter,
+      exclude: targetInsideSource ? spec.target.prefix : undefined,
       wake
     })
-    // the whole prefix is counted alongside; until then the job shows no total
+    // the whole prefix is counted alongside; until then the job shows no total. A count that
+    // includes the target folder would overstate the job, so such a sync shows none at all
     void (async () => {
+      if (targetInsideSource) return
       try {
         const totals = await countPrefix(client(spec.accountId), spec.bucket, spec.prefix)
         source.setTotals(totals.objects, totals.bytes)
@@ -111,7 +120,7 @@ export function createJobFactory(deps: FactoryDeps): JobFactory {
 
     return {
       source,
-      onSettled: (index) => source.settle(index),
+      onSettled: (index, ok) => source.settle(index, ok),
       async run(item, ctx) {
         const entry = item as QueueItem<SyncEntry>
         const targetKey = spec.target.prefix + entry.data.key.slice(spec.prefix.length)

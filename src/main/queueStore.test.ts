@@ -121,4 +121,18 @@ describe('queue store', () => {
   it('has nothing to restore before anything was saved', () => {
     expect(createQueueStore(queueDir()).loadAll()).toEqual([])
   })
+
+  it('writes after a torn line without gluing onto it', () => {
+    const dir = queueDir()
+    const store = createQueueStore(dir)
+    store.create(job())
+    store.settle('job-1', 0, { status: 'done' })
+    appendFileSync(join(dir, 'job-1.log'), '1') // the crash cut this write short
+
+    const next = createQueueStore(dir)
+    next.loadAll()
+    next.settle('job-1', 2, { status: 'done' })
+
+    expect([...createQueueStore(dir).loadAll()[0].outcomes.keys()]).toEqual([0, 2])
+  })
 })

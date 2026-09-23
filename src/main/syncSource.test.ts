@@ -90,6 +90,35 @@ describe('listing source', () => {
     expect(source.take()).toEqual({ error: 'Access Denied' })
   })
 
+  it('leaves out objects under an excluded prefix', async () => {
+    const s3 = fakeS3([
+      { key: 'a/x', size: 1 },
+      { key: 'backups/a/x', size: 1 },
+      { key: 'z', size: 1 }
+    ])
+    const source = listingSource({ client: () => s3, bucket: 'b', prefix: '', exclude: 'backups/', wake: () => {} })
+
+    expect(await drainKeys(source)).toEqual(['a/x', 'z'])
+  })
+
+  it('holds the resume mark before an object that failed, so a restart tries it again', async () => {
+    const s3 = fakeS3([
+      { key: 'k/a', size: 1 },
+      { key: 'k/b', size: 1 },
+      { key: 'k/c', size: 1 }
+    ])
+    const source = listingSource({ client: () => s3, bucket: 'b', prefix: 'k/', wake: () => {} })
+    source.take()
+    await settle()
+    source.take()
+    source.take()
+    source.take()
+
+    expect(source.settle(0, true)).toBe('k/a')
+    expect(source.settle(1, false)).toBeUndefined()
+    expect(source.settle(2, true)).toBeUndefined()
+  })
+
   it('lets the sync of an empty folder finish', async () => {
     const s3 = fakeS3([{ key: 'other/x', size: 1 }])
     const finished = vi.fn()

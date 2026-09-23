@@ -160,12 +160,12 @@ export function registerIpc(): void {
     if (decision !== 'resume' && decision !== 'discard') throw new Error('Invalid choice')
     return queue.restore(decision)
   })
-  // the folder comes from the job itself, never from the renderer
-  wrap('queue:revealJob', async (id: unknown) => {
+  // the folder comes from the job, and is only shown in the file manager — never opened, so
+  // a download "folder" that is really an app or script cannot be launched from here
+  wrap('queue:revealJob', (id: unknown) => {
     const dir = queue.revealDir(jobId(id))
     if (!dir) throw new Error('This job has no local folder')
-    const failure = await shell.openPath(dir)
-    if (failure) throw new Error(failure)
+    shell.showItemInFolder(dir)
   })
 
   // ---- shell / dialogs ------------------------------------------------
